@@ -24,6 +24,7 @@
         .old-tarde { background-color: #ffedd5; border: 1px solid #fdba74; color: #9a3412; }
         .old-noche { background-color: #e2e8f0; border: 1px solid #cbd5e1; color: #334155; }
         
+        /* Motor de Impresión Inteligente */
         @media print {
             .no-print { display: none !important; }
             body { background-color: white !important; color: black !important; }
@@ -81,7 +82,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v15',
+            dbName: 'TurnoSyncDB_v16',
             version: 1,
             db: null,
             init() {
@@ -115,17 +116,26 @@
                     if (!settings.sistemaGlobal) settings.sistemaGlobal = '2-2-3';
                     if (!settings.fechaInicio) settings.fechaInicio = '2026-05-04';
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
-                    if (settings.telefonoRRHH === undefined) settings.telefonoRRHH = '';
 
-                    // Catálogo de Competencias y Certificaciones
-                    if (!settings.competencias) {
-                        settings.competencias = ['LOTO (Bloqueo y Etiquetado)', 'Manejo de Montacargas', 'Electricidad Industrial', 'Mecánica Preventiva', 'Normas ISO 9001', 'Primeros Auxilios'];
+                    // NUEVO: Categorías Globales
+                    if (!settings.categoriasMaquinas) settings.categoriasMaquinas = ['Producción Corrugado', 'Conversión', 'Mantenimiento', 'Administración'];
+                    if (!settings.categoriasCompetencias) settings.categoriasCompetencias = ['Seguridad Industrial', 'Operación Técnica', 'Gestión de Calidad'];
+
+                    // Catálogo de Competencias y Certificaciones estructurado
+                    if (!settings.competencias || (settings.competencias.length > 0 && typeof settings.competencias[0] === 'string')) {
+                        settings.competencias = [
+                            {nombre: 'LOTO (Bloqueo y Etiquetado)', categoria: 'Seguridad Industrial'}, 
+                            {nombre: 'Manejo de Montacargas', categoria: 'Operación Técnica'}, 
+                            {nombre: 'Electricidad Industrial', categoria: 'Operación Técnica'}, 
+                            {nombre: 'Normas ISO 9001', categoria: 'Gestión de Calidad'}
+                        ];
                     }
 
-                    // Migración a Puestos como Objetos {nombre, cantidad}
+                    // Migración a Máquinas con Categoría
                     if (!settings.maquinas) {
                         settings.maquinas = [{ 
                             nombre: 'Corrugadora Principal', 
+                            categoria: 'Producción Corrugado',
                             activa: true,
                             puestos: [
                                 {nombre: 'Operador A', cantidad: 1}, 
@@ -135,11 +145,9 @@
                             competenciasRequeridas: ['LOTO (Bloqueo y Etiquetado)', 'Electricidad Industrial']
                         }];
                     } else {
-                        // Migrar strings antiguos a objetos si es necesario
                         settings.maquinas.forEach(m => {
-                            if (m.puestos && m.puestos.length > 0 && typeof m.puestos[0] === 'string') {
-                                m.puestos = m.puestos.map(p => ({ nombre: p, cantidad: 1 }));
-                            }
+                            if (!m.categoria) m.categoria = 'Producción Corrugado';
+                            if (m.puestos && m.puestos.length > 0 && typeof m.puestos[0] === 'string') m.puestos = m.puestos.map(p => ({ nombre: p, cantidad: 1 }));
                             if(!m.competenciasRequeridas) m.competenciasRequeridas = [];
                         });
                     }
@@ -148,7 +156,6 @@
                         settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Corrugadora Principal'], cuadrillas: ['A', 'B', 'C', 'D', 'Oficina', '1', '2', '3'] }];
                     }
                     
-                    // Catálogo de Puestos global (para autocompletado general)
                     if (!settings.puestos) settings.puestos = ['Operador A', 'Electricista', 'Ayudante', 'Tintero', 'Entarimador'];
 
                     await this.put('settings', settings);
@@ -217,7 +224,6 @@
                                 if (existingEmp.historial) newEmp.historial = existingEmp.historial;
                                 if (existingEmp.reportesActuales && !newEmp.reportesActuales) newEmp.reportesActuales = existingEmp.reportesActuales;
                             }
-                            // Migraciones de empleados
                             if(!newEmp.competencias) newEmp.competencias = [];
                             if(!newEmp.meritos) newEmp.meritos = '';
                             await this.put('employees', newEmp);
@@ -487,10 +493,9 @@
                 const supervisores = App.settings.supervisores || [];
                 const competencias = App.settings.competencias || [];
                 
-                // Lista de Cuadrillas y Turnos para checkbox
-                const turnosOld = ['1', '2', '3', 'Oficina'];
-                const turnosNew = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'];
-                const listCuadrillas = App.settings.sistemaGlobal === 'Antiguo' ? turnosOld : turnosNew;
+                const listCuadrillas = App.settings.sistemaGlobal === 'Antiguo' ? ['1', '2', '3', 'Oficina'] : ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'];
+                const catMaquinas = App.settings.categoriasMaquinas || [];
+                const catCompetencias = App.settings.categoriasCompetencias || [];
 
                 let html = `
                     <div class="mb-6 flex flex-col items-start gap-4">
@@ -515,8 +520,10 @@
                                 <h3 class="font-bold text-slate-700"><i class="fa-solid fa-microchip text-blue-600 mr-2"></i> Departamentos y Plazas</h3>
                             </div>
                             <form onsubmit="UI.addMaquina(event)" class="flex gap-2 mb-4">
-                                <input type="text" id="new-maq" placeholder="Nombre (Ej. Corrugadora 1...)" class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
-                                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
+                                <input type="text" id="new-maq" placeholder="Nombre Área..." class="w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                <input type="text" id="new-maq-cat" list="list-cat-maq" placeholder="Categoría..." class="w-1/3 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                <datalist id="list-cat-maq">${catMaquinas.map(c => `<option value="${c}">`).join('')}</datalist>
+                                <button type="submit" class="w-1/6 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
                             </form>
                             <ul class="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
                                 ${maquinas.map((m, idx) => `
@@ -524,10 +531,13 @@
                                         <div class="flex justify-between items-center mb-2">
                                             <div class="flex items-center gap-2">
                                                 <button onclick="UI.toggleMaquina(${idx})" class="text-xl ${m.activa ? 'text-green-500' : 'text-slate-300'}" title="${m.activa ? 'Activo' : 'Inactivo'}"><i class="fa-solid ${m.activa ? 'fa-toggle-on' : 'fa-toggle-off'}"></i></button>
-                                                <span class="text-sm font-bold ${m.activa ? 'text-slate-800' : 'text-slate-400 line-through'}">${m.nombre}</span>
+                                                <div>
+                                                    <span class="text-sm font-bold ${m.activa ? 'text-slate-800' : 'text-slate-400 line-through'} block leading-tight">${m.nombre}</span>
+                                                    <span class="text-[9px] font-bold text-blue-600 uppercase bg-blue-50 px-1 rounded">${m.categoria || 'General'}</span>
+                                                </div>
                                             </div>
                                             <div class="flex items-center gap-2">
-                                                <select class="border border-slate-200 rounded text-[10px] py-1 bg-slate-50 text-slate-500 max-w-[100px]" onchange="UI.cloneMachineConfig(${idx}, this.value); this.value='';">
+                                                <select class="border border-slate-200 rounded text-[10px] py-1 bg-slate-50 text-slate-500 max-w-[80px]" onchange="UI.cloneMachineConfig(${idx}, this.value); this.value='';">
                                                     <option value="">Clonar de...</option>
                                                     ${maquinas.filter((_, i) => i !== idx).map(mx => `<option value="${mx.nombre}">${mx.nombre}</option>`).join('')}
                                                 </select>
@@ -547,22 +557,22 @@
                                                 `).join('')}
                                             </div>
                                             <div class="flex gap-1">
-                                                <input type="number" id="new-pue-cant-${idx}" value="1" min="1" class="w-12 border border-slate-300 rounded px-1 py-0.5 text-[10px] text-center focus:ring-1 focus:ring-blue-500" title="Cantidad Necesaria">
+                                                <input type="number" id="new-pue-cant-${idx}" value="1" min="1" class="w-10 border border-slate-300 rounded px-1 py-0.5 text-[10px] text-center focus:ring-1 focus:ring-blue-500" title="Cantidad Necesaria">
                                                 <input type="text" id="new-pue-${idx}" placeholder="Nombre del Puesto..." class="w-full border border-slate-300 rounded px-2 py-0.5 text-[10px] focus:ring-1 focus:ring-blue-500">
                                                 <button onclick="UI.addPuestoMaquina(${idx})" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[10px]"><i class="fa-solid fa-plus"></i></button>
                                             </div>
                                         </div>
 
                                         <!-- Certificaciones Exigidas -->
-                                        <div class="border-t border-slate-100 pt-2 bg-amber-50/50 p-2 rounded">
+                                        <div class="border-t border-slate-100 pt-2 bg-amber-50/50 p-2 rounded mt-2">
                                             <label class="text-[10px] font-bold text-amber-700 uppercase block mb-1"><i class="fa-solid fa-certificate"></i> Certificaciones Exigidas para Operar:</label>
                                             <div class="flex flex-wrap gap-1">
                                                 ${competencias.map(c => `
                                                     <label class="inline-flex items-center bg-white border border-slate-200 rounded px-1 py-0.5 text-[9px] cursor-pointer hover:bg-amber-50">
                                                         <input type="checkbox" class="mr-1 rounded text-amber-600 focus:ring-amber-500 w-2.5 h-2.5"
-                                                            ${(m.competenciasRequeridas || []).includes(c) ? 'checked' : ''}
-                                                            onchange="UI.toggleMaquinaCompetencia(${idx}, '${c}', this.checked)">
-                                                        ${c}
+                                                            ${(m.competenciasRequeridas || []).includes(c.nombre) ? 'checked' : ''}
+                                                            onchange="UI.toggleMaquinaCompetencia(${idx}, '${c.nombre}', this.checked)">
+                                                        ${c.nombre}
                                                     </label>
                                                 `).join('')}
                                                 ${competencias.length === 0 ? '<span class="text-[9px] text-slate-400">Agregue competencias en el panel inferior.</span>' : ''}
@@ -576,23 +586,36 @@
                         <div class="space-y-6">
                             <!-- Catálogo de Competencias -->
                             <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                                <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-graduation-cap text-orange-500 mr-2"></i> Catálogo de Competencias y Certificaciones</h3>
+                                <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-graduation-cap text-orange-500 mr-2"></i> Catálogo de Competencias</h3>
                                 <form onsubmit="UI.addCompetencia(event)" class="flex gap-2 mb-4">
-                                    <input type="text" id="new-comp" placeholder="Ej. LOTO, Electricidad Avanzada..." class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-orange-500" required>
-                                    <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
+                                    <input type="text" id="new-comp" placeholder="Nombre Competencia..." class="w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-orange-500" required>
+                                    <input type="text" id="new-comp-cat" list="list-cat-comp" placeholder="Categoría..." class="w-1/3 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-orange-500" required>
+                                    <datalist id="list-cat-comp">${catCompetencias.map(c => `<option value="${c}">`).join('')}</datalist>
+                                    <button type="submit" class="w-1/6 bg-orange-500 hover:bg-orange-600 text-white px-2 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
                                 </form>
-                                <div class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-                                    ${competencias.map((c, idx) => `
-                                        <span class="inline-flex items-center bg-orange-100 border border-orange-200 text-orange-800 rounded px-2 py-1 text-xs">
-                                            ${c} <button onclick="UI.deleteCompetencia(${idx})" class="ml-2 text-red-400 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
-                                        </span>
-                                    `).join('')}
+                                <div class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+                                    ${catCompetencias.map(cat => {
+                                        const compsEnCat = competencias.filter(c => c.categoria === cat);
+                                        if (compsEnCat.length === 0) return '';
+                                        return `
+                                            <div class="border border-orange-100 rounded bg-white p-2">
+                                                <div class="text-[10px] font-bold text-orange-800 uppercase mb-1">${cat}</div>
+                                                <div class="flex flex-wrap gap-1.5">
+                                                    ${compsEnCat.map(c => `
+                                                        <span class="inline-flex items-center bg-orange-50 border border-orange-200 text-orange-800 rounded px-2 py-0.5 text-[10px]">
+                                                            ${c.nombre} <button onclick="UI.deleteCompetencia('${c.nombre}')" class="ml-1.5 text-red-400 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
+                                                        </span>
+                                                    `).join('')}
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
                                 </div>
                             </div>
 
                             <!-- Columna Supervisores -->
                             <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                                <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Jefaturas / Supervisores</h3>
+                                <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Jefaturas</h3>
                                 <form onsubmit="UI.addSupervisor(event)" class="flex gap-2 mb-4">
                                     <input type="text" id="new-sup" placeholder="Nombre exacto..." class="w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
                                     <input type="text" id="new-sup-tel" placeholder="WhatsApp..." class="w-1/3 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
@@ -622,7 +645,7 @@
                                                 </div>
                                             </div>
                                             <div class="border-t border-slate-100 pt-2">
-                                                <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">El Mapa de Procesos mostrará las columnas (Turnos):</label>
+                                                <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Turnos Visualizados:</label>
                                                 <div class="flex flex-wrap gap-1.5">
                                                     ${listCuadrillas.map(c => `
                                                         <label class="inline-flex items-center bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:bg-amber-100">
@@ -651,13 +674,16 @@
                 App.settings.telefonoRRHH = document.getElementById('config-tel-rrhh').value.trim(); 
                 await DB.put('settings', App.settings); 
                 document.getElementById('nav-system-mode').innerText = `Sistema: ${App.settings.sistemaGlobal}`; 
-                this.renderAdminEstructura(); // Re-render to update cuadrilla lists
+                this.renderAdminEstructura(); 
             },
             
             async addMaquina(e) { 
-                e.preventDefault(); const val = document.getElementById('new-maq').value.trim(); 
+                e.preventDefault(); 
+                const val = document.getElementById('new-maq').value.trim(); 
+                const cat = document.getElementById('new-maq-cat').value.trim(); 
                 if (val && !App.settings.maquinas.find(m => m.nombre === val)) { 
-                    App.settings.maquinas.push({nombre: val, activa: true, puestos: [], competenciasRequeridas: []}); 
+                    App.settings.maquinas.push({nombre: val, categoria: cat, activa: true, puestos: [], competenciasRequeridas: []}); 
+                    if(cat && !App.settings.categoriasMaquinas.includes(cat)) App.settings.categoriasMaquinas.push(cat);
                     await DB.put('settings', App.settings); this.renderAdminEstructura(); 
                 } 
             },
@@ -702,8 +728,22 @@
                 await DB.put('settings', App.settings);
             },
 
-            async addCompetencia(e) { e.preventDefault(); const val = document.getElementById('new-comp').value.trim(); if (val && !App.settings.competencias.includes(val)) { App.settings.competencias.push(val); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
-            async deleteCompetencia(idx) { if(confirm("¿Eliminar competencia del catálogo global?")) { App.settings.competencias.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
+            async addCompetencia(e) { 
+                e.preventDefault(); 
+                const val = document.getElementById('new-comp').value.trim(); 
+                const cat = document.getElementById('new-comp-cat').value.trim();
+                if (val && !App.settings.competencias.find(c => c.nombre === val)) { 
+                    App.settings.competencias.push({nombre: val, categoria: cat}); 
+                    if(cat && !App.settings.categoriasCompetencias.includes(cat)) App.settings.categoriasCompetencias.push(cat);
+                    await DB.put('settings', App.settings); this.renderAdminEstructura(); 
+                } 
+            },
+            async deleteCompetencia(compName) { 
+                if(confirm("¿Eliminar competencia del catálogo global?")) { 
+                    App.settings.competencias = App.settings.competencias.filter(c => c.nombre !== compName); 
+                    await DB.put('settings', App.settings); this.renderAdminEstructura(); 
+                } 
+            },
 
             async addSupervisor(e) { 
                 e.preventDefault(); const val = document.getElementById('new-sup').value.trim(); const tel = document.getElementById('new-sup-tel').value.trim();
@@ -776,7 +816,12 @@
                 if (dpi) emp = await DB.get('employees', dpi);
 
                 const supervisores = App.settings.supervisores || [];
-                const catCompetencias = App.settings.competencias || [];
+                const catCompetencias = App.settings.categoriasCompetencias || [];
+                const allCompetencias = App.settings.competencias || [];
+                
+                // Buscar competencias requeridas por la máquina que tiene asignada
+                const currentMaqObj = App.settings.maquinas.find(m => m.nombre === emp.maquina);
+                const maqReqComps = currentMaqObj ? (currentMaqObj.competenciasRequeridas || []) : [];
 
                 document.getElementById('admin-content-area').innerHTML = `
                     <div class="max-w-4xl mx-auto bg-white border border-slate-200 rounded-lg p-6 fade-in shadow-sm">
@@ -810,7 +855,7 @@
                                     </div>
                                     
                                     <div><label class="block text-xs font-semibold mb-1">Área / Máquina</label>
-                                        <select id="e-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onMaquinaEmployeeChange()" ${!emp.supervisor ? 'disabled' : ''}>
+                                        <select id="e-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onMaquinaEmployeeChange(); UI.renderEmployeeForm(document.getElementById('e-dpi').value);" ${!emp.supervisor ? 'disabled' : ''}>
                                             <option value="">-- Seleccione Jefatura Primero --</option>
                                         </select>
                                     </div>
@@ -854,7 +899,7 @@
                                         </select>
                                     </div>
                                     
-                                    <div><label class="block text-xs font-semibold mb-1">Vacaciones Disponibles</label><input type="number" id="e-vac" value="${emp.turnosVacacionesDisponibles}" min="0" class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
+                                    <div><label class="block text-xs font-semibold mb-1">Vacaciones Disponibles (Días/Turnos)</label><input type="number" id="e-vac" value="${emp.turnosVacacionesDisponibles}" min="0" class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
                                 </div>
 
                                 <!-- Columna 3: Salario Base -->
@@ -871,25 +916,48 @@
                                 </div>
                             </div>
 
-                            <!-- SECCIÓN DE TALENTO Y DESARROLLO -->
+                            <!-- SECCIÓN DE TALENTO Y DESARROLLO CATEGORIZADA -->
                             <div class="border-t border-slate-200 pt-6 mt-6">
                                 <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-medal text-orange-500 mr-2"></i> Perfil Profesional, Certificaciones y Méritos</h3>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div class="bg-orange-50/50 border border-orange-200 rounded p-4">
-                                        <label class="block text-xs font-bold text-orange-800 mb-2 uppercase">Certificaciones Adquiridas:</label>
-                                        <div class="flex flex-col gap-2 max-h-48 overflow-y-auto pr-2">
-                                            ${catCompetencias.map(c => `
-                                                <label class="inline-flex items-center bg-white border border-slate-200 rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-orange-50 shadow-sm">
-                                                    <input type="checkbox" name="emp_certificaciones" value="${c}" class="mr-2 rounded text-orange-600 focus:ring-orange-500 w-4 h-4" ${(emp.competencias||[]).includes(c) ? 'checked' : ''}>
-                                                    ${c}
-                                                </label>
-                                            `).join('')}
-                                            ${catCompetencias.length === 0 ? '<span class="text-xs text-slate-400">No hay competencias creadas en el catálogo de Estructura.</span>' : ''}
+                                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                    <div class="lg:col-span-2 bg-orange-50/50 border border-orange-200 rounded p-4">
+                                        <div class="flex justify-between items-center mb-2 border-b border-orange-200 pb-2">
+                                            <label class="block text-sm font-bold text-orange-800 uppercase"><i class="fa-solid fa-certificate"></i> Matriz de Certificaciones Adquiridas</label>
+                                            <span class="text-xs text-slate-500 bg-white px-2 py-1 rounded shadow-sm">Área Actual: <b class="text-blue-700">${emp.maquina || 'Ninguna'}</b></span>
+                                        </div>
+                                        <p class="text-[10px] text-slate-500 mb-3">Se muestran las certificaciones agrupadas por categoría. Las requeridas para su máquina actual están resaltadas.</p>
+                                        
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-64 overflow-y-auto pr-2">
+                                            ${catCompetencias.map(cat => {
+                                                const compsEnCat = allCompetencias.filter(c => c.categoria === cat);
+                                                if (compsEnCat.length === 0) return '';
+                                                return `
+                                                    <div class="border border-orange-100 rounded bg-white p-2">
+                                                        <div class="text-[10px] font-bold text-orange-800 uppercase mb-2 border-b border-orange-50 pb-1">${cat}</div>
+                                                        <div class="flex flex-col gap-1.5">
+                                                            ${compsEnCat.map(c => {
+                                                                const isRequired = maqReqComps.includes(c.nombre);
+                                                                const labelClass = isRequired ? 'bg-amber-100 border-amber-300 font-bold' : 'bg-slate-50 border-slate-200 hover:bg-orange-50';
+                                                                const textClass = isRequired ? 'text-amber-900' : 'text-slate-700';
+                                                                return `
+                                                                    <label class="inline-flex items-start border rounded px-2 py-1.5 text-xs cursor-pointer shadow-sm ${labelClass}">
+                                                                        <input type="checkbox" name="emp_certificaciones" value="${c.nombre}" class="mr-2 mt-0.5 rounded text-orange-600 focus:ring-orange-500 w-3.5 h-3.5 flex-shrink-0" ${(emp.competencias||[]).includes(c.nombre) ? 'checked' : ''}>
+                                                                        <div class="flex flex-col">
+                                                                            <span class="${textClass}">${c.nombre}</span>
+                                                                            ${isRequired ? `<span class="text-[8px] text-red-600 uppercase mt-0.5"><i class="fa-solid fa-star"></i> Obligatoria (Puesto Actual)</span>` : ''}
+                                                                        </div>
+                                                                    </label>
+                                                                `;
+                                                            }).join('')}
+                                                        </div>
+                                                    </div>
+                                                `;
+                                            }).join('')}
                                         </div>
                                     </div>
                                     <div class="bg-slate-50 border border-slate-200 rounded p-4 flex flex-col">
                                         <label class="block text-xs font-bold text-slate-700 mb-2 uppercase">Historial de Capacitaciones, Honores y Notas:</label>
-                                        <textarea id="e-meritos" class="w-full flex-grow border border-slate-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 resize-none h-40" placeholder="Ej. Empleado del mes en Agosto 2025. Completó curso de primeros auxilios interno.">${emp.meritos || ''}</textarea>
+                                        <textarea id="e-meritos" class="w-full flex-grow border border-slate-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 resize-none h-48" placeholder="Ej. Empleado del mes en Agosto 2025. Completó curso de primeros auxilios interno.">${emp.meritos || ''}</textarea>
                                     </div>
                                 </div>
                             </div>
@@ -911,11 +979,21 @@
                     setTimeout(() => { UI.onMaquinaEmployeeChange(emp.puesto); }, 50);
                 }, 50);
 
+                // Sobrescribimos el onChange de maquina para guardar la info antes de recargar
+                document.getElementById('e-maq').onchange = () => {
+                    emp.maquina = document.getElementById('e-maq').value;
+                    // Preservar temporalmente checkboxes
+                    const certs = []; document.querySelectorAll('input[name="emp_certificaciones"]:checked').forEach(cb => certs.push(cb.value));
+                    emp.competencias = certs;
+                    App.currentUser = emp; // Hack temporal para re-render
+                    UI.onMaquinaEmployeeChange();
+                    UI.renderEmployeeForm(dpi); // Recargar la vista para pintar las obligatorias
+                };
+
                 document.getElementById('emp-form').addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const currentEmp = (await DB.get('employees', document.getElementById('e-dpi').value.trim())) || {};
                     
-                    // Extraer checkboxes de competencias
                     const certs = [];
                     document.querySelectorAll('input[name="emp_certificaciones"]:checked').forEach(cb => certs.push(cb.value));
 
@@ -1005,7 +1083,7 @@
                 pueSelect.disabled = false;
             },
 
-            // --- TAB: PLANILLAS (CATORCENAL Y REPORTE DE SUPERVISOR) ---
+            // --- TAB: PLANILLAS ---
             async renderAdminPlanillas(isSupervisorMode = false) {
                 let employees = await DB.getAll('employees');
                 if (isSupervisorMode) {
@@ -1211,18 +1289,27 @@
             async renderAdminProcesos() {
                 const contentArea = document.getElementById('admin-content-area');
                 const supervisores = App.settings.supervisores || [];
+                const maquinasGlobales = App.settings.maquinas || [];
+                const catMaquinas = App.settings.categoriasMaquinas || [];
 
                 let html = `
                     <div class="mb-6 border-b border-slate-200 pb-4">
                         <h2 class="text-xl font-bold text-slate-800">Control Operativo y Matriz de Talento</h2>
                         <p class="text-xs text-slate-500 mt-1 mb-4">Seleccione la jefatura y el área para auditar vacantes y competencias del personal asignado.</p>
                         
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl bg-slate-50 p-4 rounded-lg border border-slate-200">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
                             <div>
                                 <label class="block text-xs font-bold text-slate-700 mb-1">Jefatura a Cargo</label>
                                 <select id="proc-sup" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onSupervisorProcesosChange()">
                                     <option value="">-- Seleccionar Jefatura --</option>
                                     ${supervisores.map(s => `<option value="${s.nombre}">${s.nombre}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1"><i class="fa-solid fa-filter text-slate-400"></i> Filtrar Áreas por Categoría</label>
+                                <select id="proc-cat-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onSupervisorProcesosChange()" disabled>
+                                    <option value="ALL">-- Todas las Categorías --</option>
+                                    ${catMaquinas.map(c => `<option value="${c}">${c}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
@@ -1245,12 +1332,39 @@
 
             onSupervisorProcesosChange() {
                 const supName = document.getElementById('proc-sup').value;
+                const catFiltro = document.getElementById('proc-cat-maq').value;
                 const maqSelect = document.getElementById('proc-maq');
-                if (!supName) { maqSelect.innerHTML = '<option value="">-- Seleccione Jefatura Primero --</option>'; maqSelect.disabled = true; this.filterProcesosMatrix(); return; }
+                const catSelect = document.getElementById('proc-cat-maq');
+                
+                if (!supName) { 
+                    maqSelect.innerHTML = '<option value="">-- Seleccione Jefatura Primero --</option>'; 
+                    maqSelect.disabled = true; 
+                    catSelect.disabled = true;
+                    this.filterProcesosMatrix(); 
+                    return; 
+                }
+                
+                catSelect.disabled = false;
+
                 const supervisor = App.settings.supervisores.find(s => s.nombre === supName);
-                const maquinas = supervisor && supervisor.maquinas ? supervisor.maquinas : [];
-                if (maquinas.length === 0) { maqSelect.innerHTML = '<option value="">-- Jefatura sin áreas asignadas --</option>'; maqSelect.disabled = true; } 
-                else { maqSelect.innerHTML = '<option value="">-- Seleccionar Área --</option>' + maquinas.map(m => `<option value="${m}">${m}</option>`).join(''); maqSelect.disabled = false; }
+                let maquinasNombres = supervisor && supervisor.maquinas ? supervisor.maquinas : [];
+                
+                // Aplicar Filtro de Categoría si no es ALL
+                if(catFiltro !== 'ALL') {
+                    maquinasNombres = maquinasNombres.filter(mNombre => {
+                        const mData = App.settings.maquinas.find(mObj => mObj.nombre === mNombre);
+                        return mData && mData.categoria === catFiltro;
+                    });
+                }
+                
+                if (maquinasNombres.length === 0) { 
+                    maqSelect.innerHTML = '<option value="">-- No hay áreas en esta categoría --</option>'; 
+                    maqSelect.disabled = true; 
+                } 
+                else { 
+                    maqSelect.innerHTML = '<option value="">-- Seleccionar Área --</option>' + maquinasNombres.map(m => `<option value="${m}">${m}</option>`).join(''); 
+                    maqSelect.disabled = false; 
+                }
                 this.filterProcesosMatrix();
             },
 
@@ -1275,7 +1389,7 @@
                         <h3 class="text-lg font-bold text-slate-800 mb-3"><i class="fa-solid fa-users-viewfinder text-blue-600 mr-1"></i> Matriz de Cobertura (Requerimientos Físicos)</h3>
                         <div class="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
                             <div class="bg-blue-900 text-white p-3 font-bold text-sm flex justify-between items-center">
-                                <span><i class="fa-solid fa-layer-group mr-2 text-blue-300"></i> ${maq}</span>
+                                <span><i class="fa-solid fa-layer-group mr-2 text-blue-300"></i> ${maq} <span class="ml-2 text-[10px] bg-blue-700 px-2 rounded">Cat: ${maquinaData.categoria || 'General'}</span></span>
                             </div>
                             <div class="overflow-x-auto">
                                 <table class="min-w-full divide-y divide-slate-200 text-sm">
@@ -1288,15 +1402,22 @@
                                     <tbody class="bg-white divide-y divide-slate-100">
                 `;
 
+                let totalOcupados = 0;
+                let totalRequeridos = 0;
+
                 puestosOficiales.forEach(pObj => {
-                    const pname = pObj.nombre; const pcant = pObj.cantidad;
+                    const pname = pObj.nombre; const pcant = parseInt(pObj.cantidad) || 1;
+                    totalRequeridos += (pcant * cuadrillas.length);
+
                     html += `<tr><td class="px-4 py-3 font-semibold text-slate-800 bg-slate-50 border-r border-slate-200">${pname} <span class="text-[10px] bg-slate-200 px-1 rounded ml-1 font-mono">Req: ${pcant}</span></td>`;
                     
                     cuadrillas.forEach(cuad => {
                         const workers = team.filter(e => e.cuadrilla === cuad && e.puesto === pname);
                         if (workers.length >= pcant) {
+                            totalOcupados += pcant; // Contar hasta el limite requerido
                             html += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-green-50 border border-green-300 text-green-800 font-bold px-2 py-1 rounded text-xs shadow-sm">${workers.map(w => w.nombre.split(' ')[0]).join('<br>')}</div></td>`;
                         } else if (workers.length > 0) {
+                            totalOcupados += workers.length;
                             html += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-amber-50 border border-amber-400 text-amber-800 font-bold px-2 py-1 rounded text-xs shadow-sm">${workers.map(w => w.nombre.split(' ')[0]).join('<br>')}<div class="text-[9px] text-red-600 mt-1 pt-1 border-t border-amber-200 font-bold">FALTA ${pcant - workers.length}</div></div></td>`;
                         } else {
                             html += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-red-50 border border-red-300 text-red-600 font-bold px-2 py-1 rounded text-[10px] shadow-inner">VACANTE (Faltan ${pcant})</div></td>`;
@@ -1308,7 +1429,7 @@
                 if (puestosOficiales.length === 0) html += `<tr><td colspan="${cuadrillas.length + 1}" class="px-4 py-6 text-center text-slate-500">Configura los puestos requeridos en la pestaña Estructura.</td></tr>`;
                 html += `</tbody></table></div></div></div>`;
 
-                // --- 2. MATRIZ DE COMPETENCIAS (SKILLS MATRIX) ---
+                // --- 2. MATRIZ DE COMPETENCIAS (SKILLS MATRIX CATEGORIZADA) ---
                 html += `
                     <div class="mb-4 mt-8">
                         <h3 class="text-lg font-bold text-slate-800 mb-1"><i class="fa-solid fa-graduation-cap text-orange-500 mr-1"></i> Matriz de Competencias y Talento (Skills Matrix)</h3>
@@ -1321,15 +1442,35 @@
                 } else if (team.length === 0) {
                     html += `<div class="bg-slate-50 border border-slate-200 text-slate-500 p-4 rounded text-sm text-center">No hay personal asignado a esta área para evaluar.</div>`;
                 } else {
+                    
+                    // Agrupar los requerimientos por categoria para dibujar los headers agrupados
+                    const allCompsDB = App.settings.competencias || [];
+                    const groupedReqs = {};
+                    reqCompetencias.forEach(rc => {
+                        const compObj = allCompsDB.find(c => c.nombre === rc);
+                        const cat = compObj ? compObj.categoria : 'General';
+                        if(!groupedReqs[cat]) groupedReqs[cat] = [];
+                        groupedReqs[cat].push(rc);
+                    });
+
                     html += `
                         <div class="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
                             <div class="overflow-x-auto">
                                 <table class="min-w-full divide-y divide-slate-200 text-sm">
                                     <thead class="bg-orange-50">
+                                        <!-- Fila de Categorías -->
                                         <tr>
-                                            <th class="px-4 py-3 text-left font-bold text-orange-900 border-r border-orange-200">Empleado Evaluado</th>
-                                            ${reqCompetencias.map(c => `<th class="px-4 py-3 text-center font-bold text-orange-900 border-r border-orange-200 text-xs w-32"><div class="truncate w-full" title="${c}">${c}</div></th>`).join('')}
-                                            <th class="px-4 py-3 text-center font-black text-orange-900">Score de Idoneidad</th>
+                                            <th class="px-4 py-2 border-r border-orange-200 border-b border-orange-200" rowspan="2"></th>
+                                            ${Object.keys(groupedReqs).map(cat => `
+                                                <th class="px-4 py-1 text-center font-black text-orange-800 border-r border-orange-200 border-b border-orange-200 uppercase text-[10px]" colspan="${groupedReqs[cat].length}">${cat}</th>
+                                            `).join('')}
+                                            <th class="px-4 py-2 border-l-2 border-orange-200" rowspan="2"></th>
+                                        </tr>
+                                        <!-- Fila de Competencias -->
+                                        <tr>
+                                            ${Object.keys(groupedReqs).map(cat => 
+                                                groupedReqs[cat].map(c => `<th class="px-2 py-2 text-center font-bold text-orange-900 border-r border-orange-200 text-xs w-28"><div class="truncate w-full leading-tight" title="${c}">${c}</div></th>`).join('')
+                                            ).join('')}
                                         </tr>
                                     </thead>
                                     <tbody class="bg-white divide-y divide-slate-100">
@@ -1339,13 +1480,15 @@
                         const wComps = w.competencias || [];
                         let rowHtml = `<tr><td class="px-4 py-2 bg-slate-50 border-r border-slate-200"><div class="font-bold text-slate-800">${w.nombre}</div><div class="text-[9px] text-slate-500">${w.puesto} | Turno ${w.cuadrilla}</div></td>`;
                         
-                        reqCompetencias.forEach(rc => {
-                            if (wComps.includes(rc)) {
-                                matches++;
-                                rowHtml += `<td class="px-4 py-2 text-center border-r border-slate-100 text-green-500 text-lg"><i class="fa-solid fa-circle-check"></i></td>`;
-                            } else {
-                                rowHtml += `<td class="px-4 py-2 text-center border-r border-slate-100 text-red-300 text-lg"><i class="fa-solid fa-circle-xmark"></i></td>`;
-                            }
+                        Object.keys(groupedReqs).forEach(cat => {
+                            groupedReqs[cat].forEach(rc => {
+                                if (wComps.includes(rc)) {
+                                    matches++;
+                                    rowHtml += `<td class="px-4 py-2 text-center border-r border-slate-100 text-green-500 text-lg"><i class="fa-solid fa-circle-check"></i></td>`;
+                                } else {
+                                    rowHtml += `<td class="px-4 py-2 text-center border-r border-slate-100 text-red-300 text-lg"><i class="fa-solid fa-circle-xmark"></i></td>`;
+                                }
+                            });
                         });
 
                         const score = Math.round((matches / reqCompetencias.length) * 100);
@@ -1383,11 +1526,17 @@
             async renderHistorialDetalle(dpi) {
                 const container = document.getElementById('historial-detalle-container');
                 if (!dpi) { container.innerHTML = `...`; return; }
+
                 const emp = await DB.get('employees', dpi);
                 const historial = emp.historial || [];
-                if (historial.length === 0) { container.innerHTML = `<div class="text-center py-8 text-slate-500">Sin historial registrado.</div>`; return; }
 
-                let sumDevengado = 0; historial.forEach(h => sumDevengado += h.totalDevengado);
+                if (historial.length === 0) {
+                    container.innerHTML = `<div class="text-center py-8 text-slate-500">Sin historial registrado.</div>`;
+                    return;
+                }
+
+                let sumDevengado = 0;
+                historial.forEach(h => sumDevengado += h.totalDevengado);
                 const promedioCatorcenal = sumDevengado / historial.length;
                 const promedioMensual = (promedioCatorcenal / 14) * 30.4166; 
 
@@ -1423,7 +1572,7 @@
             },
 
             // ==========================================
-            // VISTAS DE SUPERVISOR Y EMPLEADO
+            // VISTAS DE SUPERVISOR (NUEVA PESTAÑA PROCESOS AÑADIDA)
             // ==========================================
             async renderSupervisorDashboard() {
                 const supInfo = App.currentUser.supervisorInfo;
@@ -1435,19 +1584,70 @@
                                 <h1 class="text-2xl font-bold mb-1">Portal de Jefatura</h1>
                                 <p class="text-indigo-200 text-sm"><i class="fa-solid fa-user-tie mr-1"></i> ${supInfo.nombre}</p>
                             </div>
-                            <div class="text-left md:text-right">
-                                <div class="text-xs text-indigo-200 uppercase mb-1">Tus Turnos a Cargo:</div>
-                                <div class="flex gap-1 flex-wrap md:justify-end">
-                                    ${(supInfo.cuadrillas||[]).map(c => `<span class="bg-indigo-800 border border-indigo-600 px-2 py-1 rounded font-bold text-[10px] uppercase shadow-sm">${c}</span>`).join('')}
-                                </div>
+                            <div class="flex gap-2">
+                                <button onclick="UI.showSupervisorTab('planillas')" id="sup-tab-planillas" class="sup-tab-btn bg-white text-indigo-900 px-4 py-2 rounded shadow text-sm font-bold"><i class="fa-solid fa-money-check-dollar mr-1"></i> Mi Equipo</button>
+                                <button onclick="UI.showSupervisorTab('procesos')" id="sup-tab-procesos" class="sup-tab-btn bg-indigo-800 text-indigo-100 hover:bg-indigo-600 px-4 py-2 rounded border border-indigo-500 text-sm font-bold transition-colors"><i class="fa-solid fa-sitemap mr-1"></i> Matriz Skills</button>
                             </div>
                         </div>
+
                         <div id="supervisor-content-area" class="bg-white rounded-lg shadow-sm border border-slate-200 p-4 sm:p-6 min-h-[400px] print:shadow-none print:border-none print:p-0"></div>
                     </div>
                 `;
-                this.renderAdminPlanillas(true);
+                this.showSupervisorTab('planillas');
             },
 
+            showSupervisorTab(tab) {
+                document.querySelectorAll('.sup-tab-btn').forEach(btn => {
+                    btn.classList.remove('bg-white', 'text-indigo-900', 'shadow');
+                    btn.classList.add('bg-indigo-800', 'text-indigo-100');
+                });
+                const activeBtn = document.getElementById(`sup-tab-${tab}`);
+                if(activeBtn) {
+                    activeBtn.classList.add('bg-white', 'text-indigo-900', 'shadow');
+                    activeBtn.classList.remove('bg-indigo-800', 'text-indigo-100');
+                }
+
+                if (tab === 'planillas') this.renderAdminPlanillas(true);
+                else if (tab === 'procesos') this.renderSupervisorProcesos();
+            },
+
+            async renderSupervisorProcesos() {
+                const supInfo = App.currentUser.supervisorInfo;
+                const contentArea = document.getElementById('supervisor-content-area');
+                
+                const maquinasActivas = (App.settings.maquinas || []).filter(m => (supInfo.maquinas||[]).includes(m.nombre));
+
+                let html = `
+                    <div class="mb-6 border-b border-slate-200 pb-4 no-print">
+                        <h2 class="text-xl font-bold text-slate-800">Mapa Operativo y Matriz de Talento</h2>
+                        <p class="text-xs text-slate-500 mt-1 mb-4">Evalúe la cobertura de su personal y su idoneidad basada en certificaciones.</p>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl bg-slate-50 p-4 rounded-lg border border-slate-200">
+                            <!-- Input hidden del supervisor para reusar logica de procesos -->
+                            <input type="hidden" id="proc-sup" value="${supInfo.nombre}">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Área / Máquina (De su jurisdicción)</label>
+                                <select id="proc-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.filterProcesosMatrix()">
+                                    <option value="">-- Seleccionar Área --</option>
+                                    ${maquinasActivas.map(m => `<option value="${m.nombre}">${m.nombre}</option>`).join('')}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="procesos-matrix-area">
+                        <div class="text-center py-12 text-slate-400 bg-slate-50 rounded-lg border border-slate-200 border-dashed">
+                            <i class="fa-solid fa-hand-pointer text-4xl mb-3 text-slate-300"></i><br>
+                            Seleccione un área para cargar su matriz.
+                        </div>
+                    </div>
+                `;
+                contentArea.innerHTML = html;
+            },
+
+
+            // ==========================================
+            // VISTA DEL EMPLEADO
+            // ==========================================
             renderEmployeeDashboard() {
                 const container = document.getElementById('app-container');
                 container.innerHTML = `
