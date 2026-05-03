@@ -64,7 +64,7 @@
     </main>
 
     <footer class="bg-slate-200 text-slate-500 text-center py-4 text-xs mt-auto no-print">
-        &copy; 2026 TurnoSync Industrial - Modelo 2-2-3 Optimizado. Corrugadora Guatemala S.A.
+        &copy; 2026 TurnoSync Industrial - Modelo 2-2-3 Optimizado. Empresa
     </footer>
 
     <script>
@@ -116,10 +116,10 @@
                     if (!settings.fechaInicio) settings.fechaInicio = '2026-05-04';
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
 
-                    if (!settings.maquinas) settings.maquinas = [{ nombre: 'Corrugadora 1', activa: true }];
+                    if (!settings.maquinas) settings.maquinas = [{ nombre: 'Maquina 01', activa: true }];
                     
                     if (!settings.supervisores) {
-                        settings.supervisores = [{ nombre: 'Supervisor General', maquinas: ['Corrugadora 1'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'] }];
+                        settings.supervisores = [{ nombre: 'Supervisor General', maquinas: ['Maquina 02'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'] }];
                     }
 
                     if (!settings.puestos) settings.puestos = ['Operador', 'Ayudante', 'Tintero', 'Alimentador', 'Entarimador 1', 'Entarimador 2'];
@@ -827,7 +827,7 @@
                     <!-- ENCABEZADO EXCLUSIVO PARA CUANDO SE IMPRIME EL REPORTE -->
                     <div class="hidden print:block text-center mb-8 border-b-2 border-black pb-4">
                         <h1 class="text-2xl font-black uppercase tracking-wider">Reporte de Turno y Horas Físicas</h1>
-                        <p class="text-lg uppercase">Corrugadora Guatemala, S.A.</p>
+                        <p class="text-lg uppercase">Empresa</p>
                         <div class="flex justify-between mt-4 text-sm font-bold">
                             <span>Supervisor a Cargo: ${isSupervisorMode ? App.currentUser.supervisorInfo.nombre : 'Administración General'}</span>
                             <span>Fecha de Cierre: ${new Date().toLocaleDateString()}</span>
@@ -1241,7 +1241,7 @@
                         <div class="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none"><i class="fa-solid fa-industry text-[20rem]"></i></div>
                         <div class="relative z-10">
                             <div class="text-center mb-6">
-                                <h1 class="text-xl font-black tracking-widest uppercase">CORRUGADORA GUATEMALA, S.A.</h1>
+                                <h1 class="text-xl font-black tracking-widest uppercase">Empresa</h1>
                                 <p class="text-slate-600 mt-1">Nit: 67322-6</p>
                                 <p class="font-bold text-lg mt-3 border-b border-black inline-block pb-1">BOLETA DE PAGO CATORCENAL</p>
                             </div>
