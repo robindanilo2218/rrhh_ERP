@@ -82,7 +82,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v11',
+            dbName: 'TurnoSyncDB_v12',
             version: 1,
             db: null,
             init() {
@@ -107,9 +107,9 @@
                         settings = { 
                             id: 'config', 
                             sistemaGlobal: '2-2-3',
-                            fechaInicio: '2026-05-04', // Lunes de inicio base
-                            direccionRotacion: 'atras', // 'atras' (M->N->T) o 'adelante' (M->T->N)
-                            telefonoRRHH: '', // Para que supervisores envien json
+                            fechaInicio: '2026-05-04',
+                            direccionRotacion: 'atras',
+                            telefonoRRHH: '',
                             holidays: [ { date: '2026-05-01', name: 'Día del Trabajo', isWorked: true } ] 
                         };
                     }
@@ -118,13 +118,18 @@
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
                     if (settings.telefonoRRHH === undefined) settings.telefonoRRHH = '';
 
-                    if (!settings.maquinas) settings.maquinas = [{ nombre: 'Maquina 01', activa: true }];
+                    // NUEVA ESTRUCTURA: Puestos integrados directamente a la Máquina
+                    if (!settings.maquinas) {
+                        settings.maquinas = [{ 
+                            nombre: 'Maquina 01', 
+                            activa: true,
+                            puestos: ['Operador', 'Ayudante', 'Tintero', 'Alimentador', 'Entarimador 1', 'Entarimador 2']
+                        }];
+                    }
                     
                     if (!settings.supervisores) {
                         settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Maquina 01'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'] }];
                     }
-
-                    if (!settings.puestos) settings.puestos = ['Operador', 'Ayudante', 'Tintero', 'Alimentador', 'Entarimador 1', 'Entarimador 2'];
                     
                     await this.put('settings', settings);
                     resolve();
@@ -163,26 +168,22 @@
                 });
             },
             async exportJSON() {
-                // Exportación Global de RRHH (Backup)
                 const employees = await this.getAll('employees');
                 const settings = await this.getAll('settings');
                 const blob = new Blob([JSON.stringify({ employees, settings }, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `TurnoSync_Backup_RRHH.json`; a.click();
             },
             async exportSupervisorData(supName) {
-                // Exportación Segura de Supervisor (Solo sus empleados, SIN configuración global)
                 const employees = await this.getAll('employees');
                 const settings = await this.getAll('settings');
                 const supInfo = settings.supervisores.find(s => s.nombre === supName);
                 
-                // Filtramos solo la gente que tiene asignada
                 const team = employees.filter(e => e.supervisor === supName && (supInfo.cuadrillas||[]).includes(e.cuadrilla));
                 
                 const blob = new Blob([JSON.stringify({ employees: team }, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `TurnoSync_Reporte_${supName.replace(/\s+/g, '_')}.json`; a.click();
             },
             async exportEmployeeJSON(dpi) {
-                // Exportación Segura Individual (Para enviarle a un trabajador)
                 const emp = await this.get('employees', dpi);
                 const settings = await this.getAll('settings');
                 const blob = new Blob([JSON.stringify({ employees: [emp], settings }, null, 2)], { type: 'application/json' });
@@ -193,7 +194,6 @@
                     const data = JSON.parse(jsonData);
                     if (data.employees) {
                         for (const newEmp of data.employees) {
-                            // PROTECCIÓN DE HISTORIAL: Si el Admin importa el JSON de un supervisor, no debe sobreescribir el historial maestro
                             const existingEmp = await this.get('employees', newEmp.dpi);
                             if (existingEmp && existingEmp.historial) {
                                 newEmp.historial = existingEmp.historial;
@@ -201,7 +201,6 @@
                             await this.put('employees', newEmp);
                         }
                     }
-                    // Si el archivo trae settings (Backup Global), lo importamos. Si es de Supervisor, no trae settings.
                     if (data.settings) {
                         for (const set of data.settings) await this.put('settings', set);
                     }
@@ -217,17 +216,14 @@
             currentUser: null, role: null, settings: null,
             calendarViewMode: 'new',
             
-            // Patrones Rotativos 2-2-3
             patternA: ['D','D','L','L','D','D','D','L','L','D','D','L','L','L','N','N','L','L','N','N','N','L','L','N','N','L','L','L'],
             patternB: ['N','N','L','L','N','N','N','L','L','N','N','L','L','L','D','D','L','L','D','D','D','L','L','D','D','L','L','L'],
             patternC: ['L','L','D','D','L','L','L','D','D','L','L','D','D','D','L','L','N','N','L','L','L','N','N','L','L','N','N','N'],
             patternD: ['L','L','N','N','L','L','L','N','N','L','L','N','N','N','L','L','D','D','L','L','L','D','D','L','L','D','D','D'],
             
-            // Patrones Fijos 2-2-3 (Ciclo de 14 días que no rota)
             patternFijoDia: ['D','D','L','L','D','D','D','L','L','D','D','L','L','L'],
             patternFijoNoche: ['N','N','L','L','N','N','N','L','L','N','N','L','L','L'],
 
-            // Patrones Antiguos de 3 Turnos (Ciclo de 21 Días)
             oldCycleAtras: ['M','M','M','M','M','M','N12', 'N','N','N','N','N','N','L', 'T','T','T','T','T','T','D12'],
             oldCycleAdelante: ['M','M','M','M','M','M','L', 'T','T','T','T','T','T','D12', 'N','N','N','N','N','N','N12'],
 
@@ -361,7 +357,6 @@
                     if (!emp.historial) emp.historial = [];
                     emp.historial.unshift(boleta);
                     
-                    // Resetear variables operativas de la planilla
                     emp.adicionales = 0;
                     emp.feriados = 0;
                     emp.deduccionCafeteria = 0; 
@@ -460,7 +455,6 @@
                 const contentArea = document.getElementById('admin-content-area');
                 const maquinas = App.settings.maquinas || [];
                 const supervisores = App.settings.supervisores || [];
-                const puestos = App.settings.puestos || [];
                 const listCuadrillas = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'];
 
                 let html = `
@@ -499,25 +493,41 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         
-                        <!-- Columna Máquinas -->
+                        <!-- Columna Máquinas y Puestos -->
                         <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-microchip text-blue-600 mr-2"></i> Máquinas / Procesos</h3>
+                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-microchip text-blue-600 mr-2"></i> Máquinas y Puestos de Trabajo</h3>
                             <form onsubmit="UI.addMaquina(event)" class="flex gap-2 mb-4">
-                                <input type="text" id="new-maq" placeholder="Nueva máquina..." class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                <input type="text" id="new-maq" placeholder="Nombre de nueva máquina..." class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
                                 <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
                             </form>
-                            <ul class="space-y-2 max-h-96 overflow-y-auto pr-1">
+                            <ul class="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
                                 ${maquinas.map((m, idx) => `
-                                    <li class="flex justify-between items-center bg-white p-2 border border-slate-200 rounded shadow-sm">
-                                        <div class="flex items-center gap-2">
-                                            <button onclick="UI.toggleMaquina(${idx})" class="text-xl ${m.activa ? 'text-green-500' : 'text-slate-300'}" title="${m.activa ? 'Máquina Activa' : 'Máquina Inactiva'}">
-                                                <i class="fa-solid ${m.activa ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
-                                            </button>
-                                            <span class="text-sm font-medium ${m.activa ? 'text-slate-800' : 'text-slate-400 line-through'}">${m.nombre}</span>
+                                    <li class="flex flex-col bg-white p-3 border border-slate-200 rounded shadow-sm">
+                                        <div class="flex justify-between items-center mb-2">
+                                            <div class="flex items-center gap-2">
+                                                <button onclick="UI.toggleMaquina(${idx})" class="text-xl ${m.activa ? 'text-green-500' : 'text-slate-300'}" title="${m.activa ? 'Máquina Activa' : 'Máquina Inactiva'}">
+                                                    <i class="fa-solid ${m.activa ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+                                                </button>
+                                                <span class="text-sm font-bold ${m.activa ? 'text-slate-800' : 'text-slate-400 line-through'}">${m.nombre}</span>
+                                            </div>
+                                            <button onclick="UI.deleteMaquina(${idx})" class="text-red-500 hover:text-red-700 px-2"><i class="fa-solid fa-trash-can"></i></button>
                                         </div>
-                                        <button onclick="UI.deleteMaquina(${idx})" class="text-red-500 hover:text-red-700 px-2"><i class="fa-solid fa-trash-can"></i></button>
+                                        <div class="border-t border-slate-100 pt-2">
+                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Puestos Requeridos (Matriz de Vacantes):</label>
+                                            <div class="flex flex-wrap gap-1.5 mb-2">
+                                                ${(m.puestos || []).map((p, pIdx) => `
+                                                    <span class="inline-flex items-center bg-indigo-50 border border-indigo-200 text-indigo-700 rounded px-1.5 py-0.5 text-[10px]">
+                                                        ${p} <button onclick="UI.deletePuestoMaquina(${idx}, ${pIdx})" class="ml-1 text-red-500 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
+                                                    </span>
+                                                `).join('')}
+                                            </div>
+                                            <div class="flex gap-1">
+                                                <input type="text" id="new-pue-${idx}" placeholder="Agregar puesto..." class="w-full border border-slate-300 rounded px-2 py-0.5 text-[10px] focus:ring-1 focus:ring-blue-500">
+                                                <button onclick="UI.addPuestoMaquina(${idx})" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[10px]"><i class="fa-solid fa-plus"></i></button>
+                                            </div>
+                                        </div>
                                     </li>
                                 `).join('')}
                             </ul>
@@ -575,23 +585,6 @@
                                 `).join('')}
                             </ul>
                         </div>
-
-                        <!-- Columna Puestos -->
-                        <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-gear text-blue-600 mr-2"></i> Puestos de Trabajo</h3>
-                            <form onsubmit="UI.addPuesto(event)" class="flex gap-2 mb-4">
-                                <input type="text" id="new-pue" placeholder="Nuevo puesto..." class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
-                                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
-                            </form>
-                            <ul class="space-y-2 max-h-96 overflow-y-auto pr-1">
-                                ${puestos.map((p, idx) => `
-                                    <li class="flex justify-between items-center bg-white p-2 border border-slate-200 rounded shadow-sm">
-                                        <span class="text-sm font-medium text-slate-800">${p}</span>
-                                        <button onclick="UI.deletePuesto(${idx})" class="text-red-500 hover:text-red-700 px-2"><i class="fa-solid fa-trash-can"></i></button>
-                                    </li>
-                                `).join('')}
-                            </ul>
-                        </div>
                     </div>
                 `;
                 contentArea.innerHTML = html;
@@ -606,10 +599,38 @@
                 document.getElementById('nav-system-mode').innerText = `Sistema: ${App.settings.sistemaGlobal}`; 
             },
             
-            async addMaquina(e) { e.preventDefault(); const val = document.getElementById('new-maq').value.trim(); if (val && !App.settings.maquinas.find(m => m.nombre === val)) { App.settings.maquinas.push({nombre: val, activa: true}); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
+            async addMaquina(e) { 
+                e.preventDefault(); 
+                const val = document.getElementById('new-maq').value.trim(); 
+                if (val && !App.settings.maquinas.find(m => m.nombre === val)) { 
+                    App.settings.maquinas.push({nombre: val, activa: true, puestos: []}); 
+                    await DB.put('settings', App.settings); 
+                    this.renderAdminEstructura(); 
+                } 
+            },
             async toggleMaquina(idx) { App.settings.maquinas[idx].activa = !App.settings.maquinas[idx].activa; await DB.put('settings', App.settings); this.renderAdminEstructura(); },
             async deleteMaquina(idx) { if(confirm("¿Seguro que desea eliminar esta máquina?")) { App.settings.maquinas.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
             
+            async addPuestoMaquina(idx) {
+                const input = document.getElementById(`new-pue-${idx}`);
+                const val = input.value.trim();
+                if (val) {
+                    if(!App.settings.maquinas[idx].puestos) App.settings.maquinas[idx].puestos = [];
+                    if(!App.settings.maquinas[idx].puestos.includes(val)) {
+                        App.settings.maquinas[idx].puestos.push(val);
+                        await DB.put('settings', App.settings);
+                        this.renderAdminEstructura();
+                    }
+                }
+            },
+            async deletePuestoMaquina(mIdx, pIdx) {
+                if(confirm("¿Eliminar este puesto de la máquina?")) {
+                    App.settings.maquinas[mIdx].puestos.splice(pIdx, 1);
+                    await DB.put('settings', App.settings);
+                    this.renderAdminEstructura();
+                }
+            },
+
             async addSupervisor(e) { 
                 e.preventDefault(); 
                 const val = document.getElementById('new-sup').value.trim(); 
@@ -627,9 +648,6 @@
                 else App.settings.supervisores[idx][tipo] = App.settings.supervisores[idx][tipo].filter(v => v !== valor);
                 await DB.put('settings', App.settings);
             },
-
-            async addPuesto(e) { e.preventDefault(); const val = document.getElementById('new-pue').value.trim(); if (val && !App.settings.puestos.includes(val)) { App.settings.puestos.push(val); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
-            async deletePuesto(idx) { if(confirm("¿Seguro que desea eliminar este puesto?")) { App.settings.puestos.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
 
             // --- TAB: MAESTRO DE EMPLEADOS ---
             async renderAdminEmpleados() {
@@ -688,7 +706,6 @@
                 if (dpi) emp = await DB.get('employees', dpi);
 
                 const supervisores = App.settings.supervisores || [];
-                const puestos = App.settings.puestos || [];
 
                 document.getElementById('admin-content-area').innerHTML = `
                     <div class="max-w-4xl mx-auto bg-white border border-slate-200 rounded-lg p-6 fade-in shadow-sm">
@@ -722,17 +739,15 @@
                                     </div>
                                     
                                     <div><label class="block text-xs font-semibold mb-1">Máquina (A cargo del Supervisor)</label>
-                                        <select id="e-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" ${!emp.supervisor ? 'disabled' : ''}>
+                                        <select id="e-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onMaquinaEmployeeChange()" ${!emp.supervisor ? 'disabled' : ''}>
                                             <option value="">-- Seleccione Supervisor Primero --</option>
                                         </select>
                                     </div>
                                     
                                     <div>
-                                        <label class="block text-xs font-semibold mb-1">Puesto Oficial</label>
-                                        <select id="e-puesto" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500">
-                                            <option value="">-- Seleccionar Puesto --</option>
-                                            ${puestos.map(p => `<option value="${p}" ${emp.puesto===p?'selected':''}>${p}</option>`).join('')}
-                                            <option value="Comodín (Volante)" ${emp.puesto==='Comodín (Volante)'?'selected':''}>Comodín (Volante)</option>
+                                        <label class="block text-xs font-semibold mb-1">Puesto Oficial (Específico de Máquina)</label>
+                                        <select id="e-puesto" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" ${!emp.maquina ? 'disabled' : ''}>
+                                            <option value="">-- Seleccione Máquina Primero --</option>
                                         </select>
                                     </div>
 
@@ -794,7 +809,10 @@
                 `;
                 this.updateCalcSueldo();
                 
-                setTimeout(() => { UI.onSupervisorEmployeeChange('${emp.maquina}'); }, 50);
+                setTimeout(() => { 
+                    UI.onSupervisorEmployeeChange(emp.maquina); 
+                    setTimeout(() => { UI.onMaquinaEmployeeChange(emp.puesto); }, 50);
+                }, 50);
 
                 document.getElementById('emp-form').addEventListener('submit', async (e) => {
                     e.preventDefault();
@@ -836,11 +854,17 @@
             onSupervisorEmployeeChange(selectedMaq = '') {
                 const supName = document.getElementById('e-sup').value;
                 const maqSelect = document.getElementById('e-maq');
+                const pueSelect = document.getElementById('e-puesto');
+                
                 if (!maqSelect) return;
                 
                 if (!supName) {
                     maqSelect.innerHTML = '<option value="">-- Seleccione Supervisor Primero --</option>';
                     maqSelect.disabled = true;
+                    if(pueSelect) {
+                        pueSelect.innerHTML = '<option value="">-- Seleccione Máquina Primero --</option>';
+                        pueSelect.disabled = true;
+                    }
                     return;
                 }
                 
@@ -855,6 +879,30 @@
                         maquinas.map(m => `<option value="${m}" ${selectedMaq === m ? 'selected' : ''}>${m}</option>`).join('');
                     maqSelect.disabled = false;
                 }
+            },
+
+            onMaquinaEmployeeChange(selectedPuesto = '') {
+                const maqName = document.getElementById('e-maq').value;
+                const pueSelect = document.getElementById('e-puesto');
+                if (!pueSelect) return;
+
+                if (!maqName) {
+                    pueSelect.innerHTML = '<option value="">-- Seleccione Máquina Primero --</option>';
+                    pueSelect.disabled = true;
+                    return;
+                }
+
+                const maquina = App.settings.maquinas.find(m => m.nombre === maqName);
+                const puestos = maquina && maquina.puestos ? maquina.puestos : [];
+
+                let html = '<option value="">-- Seleccionar Puesto --</option>';
+                puestos.forEach(p => {
+                    html += `<option value="${p}" ${selectedPuesto === p ? 'selected' : ''}>${p}</option>`;
+                });
+                html += `<option value="Comodín (Volante)" ${selectedPuesto === 'Comodín (Volante)' ? 'selected' : ''}>Comodín (Volante)</option>`;
+                
+                pueSelect.innerHTML = html;
+                pueSelect.disabled = false;
             },
 
             // --- TAB: PLANILLAS (CATORCENAL Y REPORTE DE SUPERVISOR) ---
@@ -1002,7 +1050,7 @@
                     emp.adicionales = Number(document.getElementById('p-adc').value);
                     emp.feriados = Number(document.getElementById('p-fer').value);
                     
-                    if(!isSupervisorMode) { // Supervisor no puede editar cafetería ni ISR
+                    if(!isSupervisorMode) { 
                         emp.deduccionCafeteria = Number(document.getElementById('p-cafe').value);
                         emp.isr = Number(document.getElementById('p-isr').value);
                     }
@@ -1097,7 +1145,9 @@
                 
                 const supervisor = App.settings.supervisores.find(s => s.nombre === sup);
                 const cuadrillas = supervisor.cuadrillas || [];
-                const puestosOficiales = App.settings.puestos || [];
+                
+                const maquinaData = App.settings.maquinas.find(m => m.nombre === maq);
+                const puestosOficiales = maquinaData && maquinaData.puestos ? maquinaData.puestos : [];
                 
                 let matrixHtml = `
                     <div class="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm mb-8">
@@ -1132,6 +1182,10 @@
                     });
                     matrixHtml += `</tr>`;
                 });
+
+                if (puestosOficiales.length === 0) {
+                    matrixHtml += `<tr><td colspan="${cuadrillas.length + 1}" class="px-4 py-6 text-center text-slate-500">No se han configurado puestos requeridos para esta máquina. Diríjase a Estructura para agregarlos.</td></tr>`;
+                }
 
                 matrixHtml += `</tbody></table></div></div>`;
                 area.innerHTML = matrixHtml;
