@@ -64,7 +64,7 @@
     </main>
 
     <footer class="bg-slate-200 text-slate-500 text-center py-4 text-xs mt-auto no-print">
-        &copy; 2026 TurnoSync Industrial - Modelo 2-2-3 Optimizado. Empresa
+        &copy; 2026 TurnoSync Industrial - Modelo 2-2-3 Optimizado. Corrugadora Guatemala S.A.
     </footer>
 
     <script>
@@ -82,7 +82,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v9',
+            dbName: 'TurnoSyncDB_v11',
             version: 1,
             db: null,
             init() {
@@ -109,17 +109,19 @@
                             sistemaGlobal: '2-2-3',
                             fechaInicio: '2026-05-04', // Lunes de inicio base
                             direccionRotacion: 'atras', // 'atras' (M->N->T) o 'adelante' (M->T->N)
+                            telefonoRRHH: '', // Para que supervisores envien json
                             holidays: [ { date: '2026-05-01', name: 'Día del Trabajo', isWorked: true } ] 
                         };
                     }
                     if (!settings.sistemaGlobal) settings.sistemaGlobal = '2-2-3';
                     if (!settings.fechaInicio) settings.fechaInicio = '2026-05-04';
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
+                    if (settings.telefonoRRHH === undefined) settings.telefonoRRHH = '';
 
                     if (!settings.maquinas) settings.maquinas = [{ nombre: 'Maquina 01', activa: true }];
                     
                     if (!settings.supervisores) {
-                        settings.supervisores = [{ nombre: 'Supervisor General', maquinas: ['Maquina 02'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'] }];
+                        settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Maquina 01'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'] }];
                     }
 
                     if (!settings.puestos) settings.puestos = ['Operador', 'Ayudante', 'Tintero', 'Alimentador', 'Entarimador 1', 'Entarimador 2'];
@@ -167,6 +169,18 @@
                 const blob = new Blob([JSON.stringify({ employees, settings }, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `TurnoSync_Backup_RRHH.json`; a.click();
             },
+            async exportSupervisorData(supName) {
+                // Exportación Segura de Supervisor (Solo sus empleados, SIN configuración global)
+                const employees = await this.getAll('employees');
+                const settings = await this.getAll('settings');
+                const supInfo = settings.supervisores.find(s => s.nombre === supName);
+                
+                // Filtramos solo la gente que tiene asignada
+                const team = employees.filter(e => e.supervisor === supName && (supInfo.cuadrillas||[]).includes(e.cuadrilla));
+                
+                const blob = new Blob([JSON.stringify({ employees: team }, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `TurnoSync_Reporte_${supName.replace(/\s+/g, '_')}.json`; a.click();
+            },
             async exportEmployeeJSON(dpi) {
                 // Exportación Segura Individual (Para enviarle a un trabajador)
                 const emp = await this.get('employees', dpi);
@@ -177,8 +191,20 @@
             async importJSON(jsonData) {
                 try {
                     const data = JSON.parse(jsonData);
-                    if (data.employees) for (const emp of data.employees) await this.put('employees', emp);
-                    if (data.settings) for (const set of data.settings) await this.put('settings', set);
+                    if (data.employees) {
+                        for (const newEmp of data.employees) {
+                            // PROTECCIÓN DE HISTORIAL: Si el Admin importa el JSON de un supervisor, no debe sobreescribir el historial maestro
+                            const existingEmp = await this.get('employees', newEmp.dpi);
+                            if (existingEmp && existingEmp.historial) {
+                                newEmp.historial = existingEmp.historial;
+                            }
+                            await this.put('employees', newEmp);
+                        }
+                    }
+                    // Si el archivo trae settings (Backup Global), lo importamos. Si es de Supervisor, no trae settings.
+                    if (data.settings) {
+                        for (const set of data.settings) await this.put('settings', set);
+                    }
                     return true;
                 } catch (e) { return false; }
             }
@@ -202,9 +228,7 @@
             patternFijoNoche: ['N','N','L','L','N','N','N','L','L','N','N','L','L','L'],
 
             // Patrones Antiguos de 3 Turnos (Ciclo de 21 Días)
-            // Hacia Atrás (Mañana -> Noche -> Tarde)
             oldCycleAtras: ['M','M','M','M','M','M','N12', 'N','N','N','N','N','N','L', 'T','T','T','T','T','T','D12'],
-            // Hacia Adelante (Mañana -> Tarde -> Noche)
             oldCycleAdelante: ['M','M','M','M','M','M','L', 'T','T','T','T','T','T','D12', 'N','N','N','N','N','N','N12'],
 
             async init() { 
@@ -215,24 +239,22 @@
             },
 
             getAnchorDate() {
-                // Generar objeto de fecha ancla basado en la configuración guardada
                 return new Date(`${this.settings.fechaInicio}T00:00:00-06:00`);
             },
 
-            async login(dpi, numEmpleado) {
-                if (dpi === 'admin' && numEmpleado === 'admin') {
+            async login(dpi, numEmpleado, clave) {
+                if (dpi === 'admin' && numEmpleado === 'admin' && clave === 'admin') {
                     this.currentUser = { nombre: 'Administrador General' }; this.role = 'admin'; this.updateNav(); UI.renderAdminDashboard(); return;
                 }
                 const emp = await DB.get('employees', dpi);
-                if (emp && emp.numEmpleado === numEmpleado) {
+                if (emp && emp.numEmpleado === numEmpleado && emp.clave === clave) {
                     this.currentUser = emp;
                     
-                    // ¿Es Supervisor? (Verificamos si su nombre está en el catálogo de supervisores)
                     const isSupervisor = this.settings.supervisores.find(s => s.nombre.toLowerCase() === emp.nombre.toLowerCase());
                     
                     if (isSupervisor) {
                         this.role = 'supervisor';
-                        this.currentUser.supervisorInfo = isSupervisor; // Guardar sus permisos
+                        this.currentUser.supervisorInfo = isSupervisor; 
                         this.updateNav();
                         UI.renderSupervisorDashboard();
                     } else {
@@ -241,7 +263,7 @@
                         this.updateNav(); 
                         UI.renderEmployeeDashboard();
                     }
-                } else { alert('Credenciales incorrectas.'); }
+                } else { alert('Credenciales incorrectas. Verifique DPI, Número y Clave.'); }
             },
 
             logout() { this.currentUser = null; this.role = null; document.getElementById('nav-user-info').classList.add('hidden'); this.renderLogin(); },
@@ -263,6 +285,7 @@
                             <form id="login-form" class="space-y-4">
                                 <div><input type="text" id="login-dpi" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Ingresa tu DPI" required></div>
                                 <div><input type="text" id="login-num" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Número de Empleado" required></div>
+                                <div><input type="password" id="login-clave" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Clave de Acceso" required></div>
                                 <button type="submit" class="w-full bg-blue-800 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg shadow-md mt-2">Ingresar al Sistema</button>
                             </form>
                             <div class="mt-6 pt-4 border-t border-slate-200">
@@ -273,7 +296,14 @@
                             </div>
                         </div>
                     </div>`;
-                document.getElementById('login-form').addEventListener('submit', (e) => { e.preventDefault(); this.login(document.getElementById('login-dpi').value.trim(), document.getElementById('login-num').value.trim()); });
+                document.getElementById('login-form').addEventListener('submit', (e) => { 
+                    e.preventDefault(); 
+                    this.login(
+                        document.getElementById('login-dpi').value.trim(), 
+                        document.getElementById('login-num').value.trim(),
+                        document.getElementById('login-clave').value.trim()
+                    ); 
+                });
                 document.getElementById('import-json-input').addEventListener('change', (e) => {
                     const file = e.target.files[0]; if (!file) return; const reader = new FileReader();
                     reader.onload = async (event) => { if (await DB.importJSON(event.target.result)) { alert("Datos actualizados. Inicia sesión."); App.init(); } };
@@ -337,9 +367,8 @@
                     emp.deduccionCafeteria = 0; 
                     emp.isr = 0; 
                     
-                    // Reset de horas basado en su turno fijo
                     if(emp.cuadrilla === 'Fijo Noche') { emp.hrsOrd = 42; emp.hrsExt = 42; }
-                    else { emp.hrsOrd = 56; emp.hrsExt = 28; } // Rotativo o Fijo Día
+                    else { emp.hrsOrd = 56; emp.hrsExt = 28; } 
                     
                     await DB.put('employees', emp);
                 }
@@ -374,7 +403,6 @@
                 const diffTime = targetDate.getTime() - this.getAnchorDate().getTime();
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                 
-                // Desfase para los turnos 2 y 3 (cada turno inicia con 7 días de diferencia)
                 let offset = 0;
                 if (cuadrillaAntigua === '2') offset = 7;
                 if (cuadrillaAntigua === '3') offset = 14;
@@ -443,7 +471,7 @@
                         </div>
                         
                         <!-- CONFIGURACIÓN GLOBAL DINÁMICA -->
-                        <div class="w-full bg-blue-50 border border-blue-200 p-4 rounded-lg grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="w-full bg-blue-50 border border-blue-200 p-4 rounded-lg grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div>
                                 <label class="text-xs font-bold text-blue-800 mb-1 block">Sistema Global Activo:</label>
                                 <select id="config-sistema" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
@@ -452,16 +480,21 @@
                                 </select>
                             </div>
                             <div>
-                                <label class="text-xs font-bold text-blue-800 mb-1 block">Fecha de Inicio (Ancla de Turnos):</label>
+                                <label class="text-xs font-bold text-blue-800 mb-1 block">Fecha de Inicio (Ancla):</label>
                                 <input type="date" id="config-fecha" value="${App.settings.fechaInicio}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
-                                <p class="text-[9px] text-blue-600 mt-1">El ciclo comienza a rotar basado en esta fecha.</p>
+                                <p class="text-[9px] text-blue-600 mt-1">El ciclo rota desde esta fecha.</p>
                             </div>
                             <div>
                                 <label class="text-xs font-bold text-blue-800 mb-1 block">Rotación Sistema Antiguo:</label>
                                 <select id="config-rotacion" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
-                                    <option value="atras" ${App.settings.direccionRotacion === 'atras' ? 'selected' : ''}>Hacia Atrás (Mañ -> Noc -> Tar)</option>
-                                    <option value="adelante" ${App.settings.direccionRotacion === 'adelante' ? 'selected' : ''}>Hacia Adelante (Mañ -> Tar -> Noc)</option>
+                                    <option value="atras" ${App.settings.direccionRotacion === 'atras' ? 'selected' : ''}>Atrás (Mañ -> Noc -> Tar)</option>
+                                    <option value="adelante" ${App.settings.direccionRotacion === 'adelante' ? 'selected' : ''}>Adelante (Mañ -> Tar -> Noc)</option>
                                 </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-green-700 mb-1 block"><i class="fa-brands fa-whatsapp"></i> Teléfono RRHH:</label>
+                                <input type="text" id="config-tel-rrhh" value="${App.settings.telefonoRRHH || ''}" placeholder="Ej. 55550000" class="w-full border border-green-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-green-500" onchange="UI.updateGlobalSettings()">
+                                <p class="text-[9px] text-green-600 mt-1">Para recibir reportes de supervisores.</p>
                             </div>
                         </div>
                     </div>
@@ -494,16 +527,23 @@
                         <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
                             <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Supervisores</h3>
                             <form onsubmit="UI.addSupervisor(event)" class="flex gap-2 mb-4">
-                                <input type="text" id="new-sup" placeholder="Nombre exacto del empleado..." class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
-                                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
+                                <input type="text" id="new-sup" placeholder="Nombre exacto..." class="w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                <input type="text" id="new-sup-tel" placeholder="WhatsApp..." class="w-1/3 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                <button type="submit" class="w-1/6 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
                             </form>
-                            <p class="text-[9px] text-slate-500 mb-2 leading-tight">Si el nombre coincide con un Empleado registrado, él accederá al Portal de Supervisor al iniciar sesión.</p>
+                            <p class="text-[9px] text-slate-500 mb-2 leading-tight">Si el nombre coincide con un Empleado registrado, él accederá al Portal de Supervisor.</p>
                             <ul class="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
                                 ${supervisores.map((s, idx) => `
                                     <li class="flex flex-col bg-white p-3 border border-slate-200 rounded shadow-sm">
                                         <div class="flex justify-between items-center mb-2">
-                                            <span class="text-sm font-bold text-blue-900"><i class="fa-solid fa-shield-halved text-blue-500 mr-1"></i> ${s.nombre}</span>
-                                            <button onclick="UI.deleteSupervisor(${idx})" class="text-red-500 hover:text-red-700 px-2"><i class="fa-solid fa-trash-can"></i></button>
+                                            <div>
+                                                <span class="text-sm font-bold text-blue-900 block"><i class="fa-solid fa-shield-halved text-blue-500 mr-1"></i> ${s.nombre}</span>
+                                                <span class="text-[10px] text-green-600 font-bold"><i class="fa-brands fa-whatsapp"></i> ${s.telefono || 'Sin número'}</span>
+                                            </div>
+                                            <div class="flex gap-2">
+                                                ${s.telefono ? `<a href="https://wa.me/502${s.telefono}?text=Hola%20${encodeURIComponent(s.nombre)},%20te%20adjunto%20el%20archivo%20JSON%20con%20tus%20permisos%20de%20Supervisor.%20Recuerda%20importarlo%20en%20la%20App." target="_blank" class="text-green-500 hover:text-green-700" title="Enviar Archivo por WhatsApp"><i class="fa-brands fa-whatsapp"></i></a>` : ''}
+                                                <button onclick="UI.deleteSupervisor(${idx})" class="text-red-500 hover:text-red-700 px-1"><i class="fa-solid fa-trash-can"></i></button>
+                                            </div>
                                         </div>
                                         <div class="border-t border-slate-100 pt-2 mb-2">
                                             <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Máquinas a Cargo:</label>
@@ -557,11 +597,11 @@
                 contentArea.innerHTML = html;
             },
 
-            // Funciones de Lógica de la Estructura
             async updateGlobalSettings() { 
                 App.settings.sistemaGlobal = document.getElementById('config-sistema').value; 
                 App.settings.fechaInicio = document.getElementById('config-fecha').value; 
                 App.settings.direccionRotacion = document.getElementById('config-rotacion').value; 
+                App.settings.telefonoRRHH = document.getElementById('config-tel-rrhh').value.trim(); 
                 await DB.put('settings', App.settings); 
                 document.getElementById('nav-system-mode').innerText = `Sistema: ${App.settings.sistemaGlobal}`; 
             },
@@ -570,7 +610,16 @@
             async toggleMaquina(idx) { App.settings.maquinas[idx].activa = !App.settings.maquinas[idx].activa; await DB.put('settings', App.settings); this.renderAdminEstructura(); },
             async deleteMaquina(idx) { if(confirm("¿Seguro que desea eliminar esta máquina?")) { App.settings.maquinas.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
             
-            async addSupervisor(e) { e.preventDefault(); const val = document.getElementById('new-sup').value.trim(); if (val && !App.settings.supervisores.find(s => s.nombre === val)) { App.settings.supervisores.push({nombre: val, maquinas: [], cuadrillas: []}); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
+            async addSupervisor(e) { 
+                e.preventDefault(); 
+                const val = document.getElementById('new-sup').value.trim(); 
+                const tel = document.getElementById('new-sup-tel').value.trim();
+                if (val && !App.settings.supervisores.find(s => s.nombre === val)) { 
+                    App.settings.supervisores.push({nombre: val, telefono: tel, maquinas: [], cuadrillas: []}); 
+                    await DB.put('settings', App.settings); 
+                    this.renderAdminEstructura(); 
+                } 
+            },
             async deleteSupervisor(idx) { if(confirm("¿Seguro que desea eliminar este supervisor?")) { App.settings.supervisores.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
             async toggleSupervisorOption(idx, tipo, valor, checked) {
                 if(!App.settings.supervisores[idx][tipo]) App.settings.supervisores[idx][tipo] = [];
@@ -600,6 +649,7 @@
                             <thead class="bg-slate-50">
                                 <tr>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Nombre / DPI</th>
+                                    <th class="px-4 py-3 text-left font-semibold text-slate-600">Contacto</th>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Puesto / Máquina</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600">Cuadrilla</th>
                                     <th class="px-4 py-3 text-right font-semibold text-slate-600">Sueldo Base</th>
@@ -609,18 +659,21 @@
                             <tbody class="bg-white divide-y divide-slate-200">
                 `;
 
-                if (employees.length === 0) html += `<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No hay empleados registrados.</td></tr>`;
+                if (employees.length === 0) html += `<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No hay empleados registrados.</td></tr>`;
                 else {
                     employees.sort((a,b) => (a.maquina||'').localeCompare(b.maquina||'')).forEach(emp => {
+                        const telFormat = emp.telefono ? emp.telefono : 'Sin WhatsApp';
                         html += `
                             <tr class="hover:bg-slate-50">
                                 <td class="px-4 py-3"><div class="font-bold text-slate-800">${emp.nombre}</div><div class="text-xs text-slate-500 font-mono">DPI: ${emp.dpi}</div></td>
+                                <td class="px-4 py-3"><div class="text-xs text-slate-600"><i class="fa-brands fa-whatsapp text-green-500"></i> ${telFormat}</div></td>
                                 <td class="px-4 py-3"><div class="font-medium text-blue-800">${emp.puesto}</div><div class="text-xs text-slate-500"><i class="fa-solid fa-industry text-[10px]"></i> ${emp.maquina || 'Sin asignar'}</div></td>
                                 <td class="px-4 py-3 text-center"><span class="bg-slate-100 text-slate-800 font-bold px-2 py-1 rounded text-xs border border-slate-300">${emp.cuadrilla}</span></td>
                                 <td class="px-4 py-3 text-right text-slate-700 font-medium">${App.formatMoney(emp.salarioBase)}</td>
                                 <td class="px-4 py-3 text-center">
                                     <button onclick="UI.renderEmployeeForm('${emp.dpi}')" class="text-blue-600 hover:text-blue-800 px-2" title="Editar Empleado"><i class="fa-solid fa-pen-to-square"></i></button>
-                                    <button onclick="DB.exportEmployeeJSON('${emp.dpi}')" class="text-green-600 hover:text-green-800 px-2" title="Descargar Perfil Seguro (Para enviar al empleado)"><i class="fa-solid fa-mobile-screen-button"></i></button>
+                                    <button onclick="DB.exportEmployeeJSON('${emp.dpi}')" class="text-blue-600 hover:text-blue-800 px-2" title="Descargar Perfil Seguro"><i class="fa-solid fa-download"></i></button>
+                                    ${emp.telefono ? `<a href="https://wa.me/502${emp.telefono}?text=Hola%20${encodeURIComponent(emp.nombre)},%20te%20adjunto%20el%20archivo%20JSON%20de%20tu%20perfil%20para%20la%20App%20TurnoSync.%20(Recuerda%20importarlo%20en%20la%20pantalla%20de%20inicio)" target="_blank" class="text-green-500 hover:text-green-700 px-2" title="Enviar Archivo por WhatsApp"><i class="fa-brands fa-whatsapp text-lg"></i></a>` : ''}
                                 </td>
                             </tr>
                         `;
@@ -631,7 +684,7 @@
             },
 
             async renderEmployeeForm(dpi = null) {
-                let emp = { nombre: '', dpi: '', numEmpleado: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A', cuadrillaAntigua: '1', salarioBase: 5001.60, turnosVacacionesDisponibles: 10 };
+                let emp = { nombre: '', dpi: '', numEmpleado: '', clave: '', telefono: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A', cuadrillaAntigua: '1', salarioBase: 5001.60, turnosVacacionesDisponibles: 10 };
                 if (dpi) emp = await DB.get('employees', dpi);
 
                 const supervisores = App.settings.supervisores || [];
@@ -652,6 +705,8 @@
                                     <div><label class="block text-xs font-semibold mb-1">Nombre Completo</label><input type="text" id="e-nombre" value="${emp.nombre}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500"></div>
                                     <div><label class="block text-xs font-semibold mb-1">DPI</label><input type="text" id="e-dpi" value="${emp.dpi}" ${dpi?'readonly':''} required class="w-full border border-slate-300 rounded px-3 py-2 text-sm ${dpi?'bg-slate-100':''}"></div>
                                     <div><label class="block text-xs font-semibold mb-1">No. Empleado</label><input type="text" id="e-num" value="${emp.numEmpleado}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
+                                    <div><label class="block text-xs font-semibold mb-1 text-blue-700">Clave de Acceso (App)</label><input type="text" id="e-clave" value="${emp.clave}" placeholder="Asigna una contraseña" required class="w-full border border-blue-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 bg-blue-50"></div>
+                                    <div><label class="block text-xs font-semibold mb-1 text-green-700"><i class="fa-brands fa-whatsapp"></i> Número de WhatsApp</label><input type="text" id="e-telefono" value="${emp.telefono || ''}" placeholder="Ej. 55550000" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500"></div>
                                     <div><label class="block text-xs font-semibold mb-1">Fecha de Ingreso</label><input type="date" id="e-fecha" value="${emp.fechaIngreso}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
                                 </div>
 
@@ -739,7 +794,6 @@
                 `;
                 this.updateCalcSueldo();
                 
-                // Desencadenar la cascada de máquinas inicial
                 setTimeout(() => { UI.onSupervisorEmployeeChange('${emp.maquina}'); }, 50);
 
                 document.getElementById('emp-form').addEventListener('submit', async (e) => {
@@ -751,6 +805,8 @@
                         dpi: document.getElementById('e-dpi').value.trim(),
                         nombre: document.getElementById('e-nombre').value.trim(),
                         numEmpleado: document.getElementById('e-num').value.trim(),
+                        clave: document.getElementById('e-clave').value.trim(),
+                        telefono: document.getElementById('e-telefono').value.trim(),
                         fechaIngreso: document.getElementById('e-fecha').value,
                         supervisor: document.getElementById('e-sup').value.trim(),
                         maquina: document.getElementById('e-maq').value.trim(),
@@ -819,7 +875,11 @@
                             <p class="text-xs text-slate-500">Registre horas variables, deducciones y bonos de esta catorcena. ${isSupervisorMode ? 'Estás viendo solo a tu equipo asignado.' : 'Luego realice el Cierre.'}</p>
                         </div>
                         <div class="flex gap-2 w-full md:w-auto">
-                            ${isSupervisorMode ? `<button onclick="window.print()" class="bg-slate-800 hover:bg-slate-700 text-white w-full md:w-auto px-4 py-2 rounded shadow text-sm font-medium"><i class="fa-solid fa-print mr-1"></i> Imprimir Reporte</button>` : ''}
+                            ${isSupervisorMode ? `
+                                <button onclick="DB.exportSupervisorData('${App.currentUser.supervisorInfo.nombre}')" class="bg-blue-600 hover:bg-blue-700 text-white w-full md:w-auto px-4 py-2 rounded shadow text-sm font-medium" title="Descargar datos para RRHH"><i class="fa-solid fa-download mr-1"></i> JSON RRHH</button>
+                                ${App.settings.telefonoRRHH ? `<a href="https://wa.me/502${App.settings.telefonoRRHH}?text=Hola,%20te%20adjunto%20mi%20reporte%20de%20turno%20actualizado%20(${encodeURIComponent(App.currentUser.supervisorInfo.nombre)}).%20Por%20favor%20impórtalo%20en%20el%20sistema." target="_blank" class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded shadow text-sm font-medium flex items-center" title="Enviar a RRHH por WhatsApp"><i class="fa-brands fa-whatsapp text-lg"></i></a>` : ''}
+                                <button onclick="window.print()" class="bg-slate-800 hover:bg-slate-700 text-white w-full md:w-auto px-4 py-2 rounded shadow text-sm font-medium"><i class="fa-solid fa-print mr-1"></i> Imprimir Reporte</button>
+                            ` : ''}
                             ${!isSupervisorMode ? `<button onclick="UI.cerrarPlanillaPrompt()" class="bg-indigo-600 hover:bg-indigo-700 text-white w-full md:w-auto px-4 py-2 rounded shadow text-sm font-medium"><i class="fa-solid fa-lock mr-1"></i> Cerrar Catorcena (Guardar)</button>` : ''}
                         </div>
                     </div>
@@ -827,7 +887,7 @@
                     <!-- ENCABEZADO EXCLUSIVO PARA CUANDO SE IMPRIME EL REPORTE -->
                     <div class="hidden print:block text-center mb-8 border-b-2 border-black pb-4">
                         <h1 class="text-2xl font-black uppercase tracking-wider">Reporte de Turno y Horas Físicas</h1>
-                        <p class="text-lg uppercase">Empresa</p>
+                        <p class="text-lg uppercase">Corrugadora Guatemala, S.A.</p>
                         <div class="flex justify-between mt-4 text-sm font-bold">
                             <span>Supervisor a Cargo: ${isSupervisorMode ? App.currentUser.supervisorInfo.nombre : 'Administración General'}</span>
                             <span>Fecha de Cierre: ${new Date().toLocaleDateString()}</span>
@@ -882,7 +942,6 @@
                 const emp = await DB.get('employees', dpi);
                 const area = document.getElementById(isSupervisorMode ? 'supervisor-content-area' : 'admin-content-area');
                 
-                // Determinar horas default actuales
                 let defaultOrd = 56; let defaultExt = 28;
                 if (emp.cuadrilla === 'Fijo Noche') { defaultOrd = 42; defaultExt = 42; }
 
@@ -901,7 +960,6 @@
 
                         <form id="plan-form" class="space-y-6">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <!-- Columna Horas (Legislación Guatemalteca 6+6 Noche) -->
                                 <div class="bg-blue-50 p-4 rounded-lg border border-blue-200 space-y-4">
                                     <h3 class="text-sm font-bold text-blue-900 border-b border-blue-200 pb-1">Control de Horas Físicas</h3>
                                     
@@ -915,7 +973,6 @@
                                     <p class="text-[10px] text-blue-700 leading-tight">La jornada de 12h de Noche se calcula como 6 hrs Ordinarias + 6 Extras por ley.</p>
                                 </div>
 
-                                <!-- Columna Dinero -->
                                 <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-4">
                                     <h3 class="text-sm font-bold text-slate-700 border-b border-slate-200 pb-1">Bonos y Deducciones (Q)</h3>
                                     <div class="grid grid-cols-2 gap-3">
@@ -1174,7 +1231,6 @@
                         </div>
                     </div>
                 `;
-                // Renderizar la tabla de planillas pero en Modo Supervisor (solo su equipo)
                 this.renderAdminPlanillas(true);
             },
 
@@ -1241,7 +1297,7 @@
                         <div class="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none"><i class="fa-solid fa-industry text-[20rem]"></i></div>
                         <div class="relative z-10">
                             <div class="text-center mb-6">
-                                <h1 class="text-xl font-black tracking-widest uppercase">Empresa</h1>
+                                <h1 class="text-xl font-black tracking-widest uppercase">Corrugadora Guatemala, S.A.</h1>
                                 <p class="text-slate-600 mt-1">Nit: 67322-6</p>
                                 <p class="font-bold text-lg mt-3 border-b border-black inline-block pb-1">BOLETA DE PAGO CATORCENAL</p>
                             </div>
