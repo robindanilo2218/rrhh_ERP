@@ -79,7 +79,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v8',
+            dbName: 'TurnoSyncDB_v9',
             version: 1,
             db: null,
             init() {
@@ -103,16 +103,19 @@
                     if (!settings) {
                         settings = { 
                             id: 'config', 
-                            sistemaGlobal: '2-2-3', // '2-2-3' o 'Antiguo'
+                            sistemaGlobal: '2-2-3',
+                            fechaInicio: '2026-05-04', // Lunes de inicio base
+                            direccionRotacion: 'atras', // 'atras' (M->N->T) o 'adelante' (M->T->N)
                             holidays: [ { date: '2026-05-01', name: 'Día del Trabajo', isWorked: true } ] 
                         };
                     }
                     if (!settings.sistemaGlobal) settings.sistemaGlobal = '2-2-3';
+                    if (!settings.fechaInicio) settings.fechaInicio = '2026-05-04';
+                    if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
 
                     if (!settings.maquinas) settings.maquinas = [{ nombre: 'Corrugadora 1', activa: true }];
                     
                     if (!settings.supervisores) {
-                        // Nuevo esquema relacional: Máquinas y Cuadrillas
                         settings.supervisores = [{ nombre: 'Supervisor General', maquinas: ['Corrugadora 1'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'] }];
                     }
 
@@ -176,25 +179,33 @@
         const App = {
             currentUser: null, role: null, settings: null,
             calendarViewMode: 'new',
-            anchorDate: new Date('2026-05-04T00:00:00-06:00'),
             
-            // Patrones Rotativos
+            // Patrones Rotativos 2-2-3
             patternA: ['D','D','L','L','D','D','D','L','L','D','D','L','L','L','N','N','L','L','N','N','N','L','L','N','N','L','L','L'],
             patternB: ['N','N','L','L','N','N','N','L','L','N','N','L','L','L','D','D','L','L','D','D','D','L','L','D','D','L','L','L'],
             patternC: ['L','L','D','D','L','L','L','D','D','L','L','D','D','D','L','L','N','N','L','L','L','N','N','L','L','N','N','N'],
             patternD: ['L','L','N','N','L','L','L','N','N','L','L','N','N','N','L','L','D','D','L','L','L','D','D','L','L','D','D','D'],
             
-            // Patrones Fijos (Ciclo de 14 días que no rota)
+            // Patrones Fijos 2-2-3 (Ciclo de 14 días que no rota)
             patternFijoDia: ['D','D','L','L','D','D','D','L','L','D','D','L','L','L'],
             patternFijoNoche: ['N','N','L','L','N','N','N','L','L','N','N','L','L','L'],
 
-            oldCycle1: ['M','M','M','M','M','M','N12', 'N','N','N','N','N','N','L', 'T','T','T','T','T','T','D12'],
+            // Patrones Antiguos de 3 Turnos (Ciclo de 21 Días)
+            // Hacia Atrás (Mañana -> Noche -> Tarde)
+            oldCycleAtras: ['M','M','M','M','M','M','N12', 'N','N','N','N','N','N','L', 'T','T','T','T','T','T','D12'],
+            // Hacia Adelante (Mañana -> Tarde -> Noche)
+            oldCycleAdelante: ['M','M','M','M','M','M','L', 'T','T','T','T','T','T','D12', 'N','N','N','N','N','N','N12'],
 
             async init() { 
                 await DB.init(); 
                 this.settings = await DB.get('settings', 'config'); 
                 document.getElementById('nav-system-mode').innerText = `Sistema: ${this.settings.sistemaGlobal}`;
                 this.renderLogin(); 
+            },
+
+            getAnchorDate() {
+                // Generar objeto de fecha ancla basado en la configuración guardada
+                return new Date(`${this.settings.fechaInicio}T00:00:00-06:00`);
             },
 
             async login(dpi, numEmpleado) {
@@ -264,8 +275,6 @@
                 const valorHora = sbm / 30 / 8;
                 const valorExtra = valorHora * 1.5;
 
-                // Soporte para Horas Dinámicas: Si no han sido tocadas, el default es 56 (Ley 2-2-3 Día).
-                // Pero si el empleado está en "Fijo Noche", el default visual ideal es 42.
                 let defaultOrd = 56; let defaultExt = 28;
                 if (emp.cuadrilla === 'Fijo Noche') { defaultOrd = 42; defaultExt = 42; }
 
@@ -329,7 +338,7 @@
             
             getNewShiftForDate(dateStr, cuadrilla) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
-                const diffTime = targetDate.getTime() - this.anchorDate.getTime();
+                const diffTime = targetDate.getTime() - this.getAnchorDate().getTime();
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                 
                 let result = 'L';
@@ -348,13 +357,22 @@
                 }
                 return result;
             },
-            getOldShiftForDate(dateStr, old) {
+            
+            getOldShiftForDate(dateStr, cuadrillaAntigua) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
-                const diffTime = targetDate.getTime() - this.anchorDate.getTime();
+                const diffTime = targetDate.getTime() - this.getAnchorDate().getTime();
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                let cycleDay = diffDays % 21;
+                
+                // Desfase para los turnos 2 y 3 (cada turno inicia con 7 días de diferencia)
+                let offset = 0;
+                if (cuadrillaAntigua === '2') offset = 7;
+                if (cuadrillaAntigua === '3') offset = 14;
+                
+                let cycleDay = (diffDays + offset) % 21;
                 if (cycleDay < 0) cycleDay += 21;
-                return this.oldCycle1[cycleDay];
+                
+                const currentCycle = this.settings.direccionRotacion === 'adelante' ? this.oldCycleAdelante : this.oldCycleAtras;
+                return currentCycle[cycleDay];
             }
         };
 
@@ -404,22 +422,39 @@
                 const maquinas = App.settings.maquinas || [];
                 const supervisores = App.settings.supervisores || [];
                 const puestos = App.settings.puestos || [];
-                const listCuadrillas = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche']; // Opciones globales de turnos
+                const listCuadrillas = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'];
 
                 let html = `
-                    <div class="mb-6 flex justify-between items-start">
+                    <div class="mb-6 flex flex-col items-start gap-4">
                         <div>
                             <h2 class="text-xl font-bold text-slate-800">Estructura Organizacional</h2>
-                            <p class="text-xs text-slate-500">Gestione los catálogos globales de la empresa y permisos de supervisores.</p>
+                            <p class="text-xs text-slate-500">Gestione los catálogos globales de la empresa, fechas ancla y permisos de supervisores.</p>
                         </div>
-                        <div class="bg-blue-50 border border-blue-200 p-3 rounded-lg flex items-center gap-3">
-                            <label class="text-sm font-bold text-blue-800">Sistema Global Activo:</label>
-                            <select id="config-sistema" class="border border-blue-300 rounded px-3 py-1 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.changeGlobalSystem(this.value)">
-                                <option value="2-2-3" ${App.settings.sistemaGlobal === '2-2-3' ? 'selected' : ''}>2-2-3 Rotativo / Fijo</option>
-                                <option value="Antiguo" ${App.settings.sistemaGlobal === 'Antiguo' ? 'selected' : ''}>Antiguo (Caótico)</option>
-                            </select>
+                        
+                        <!-- CONFIGURACIÓN GLOBAL DINÁMICA -->
+                        <div class="w-full bg-blue-50 border border-blue-200 p-4 rounded-lg grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="text-xs font-bold text-blue-800 mb-1 block">Sistema Global Activo:</label>
+                                <select id="config-sistema" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
+                                    <option value="2-2-3" ${App.settings.sistemaGlobal === '2-2-3' ? 'selected' : ''}>2-2-3 Rotativo / Fijo</option>
+                                    <option value="Antiguo" ${App.settings.sistemaGlobal === 'Antiguo' ? 'selected' : ''}>Antiguo (3 Turnos)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-blue-800 mb-1 block">Fecha de Inicio (Ancla de Turnos):</label>
+                                <input type="date" id="config-fecha" value="${App.settings.fechaInicio}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
+                                <p class="text-[9px] text-blue-600 mt-1">El ciclo comienza a rotar basado en esta fecha.</p>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-blue-800 mb-1 block">Rotación Sistema Antiguo:</label>
+                                <select id="config-rotacion" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
+                                    <option value="atras" ${App.settings.direccionRotacion === 'atras' ? 'selected' : ''}>Hacia Atrás (Mañ -> Noc -> Tar)</option>
+                                    <option value="adelante" ${App.settings.direccionRotacion === 'adelante' ? 'selected' : ''}>Hacia Adelante (Mañ -> Tar -> Noc)</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
+
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         
                         <!-- Columna Máquinas -->
@@ -444,7 +479,7 @@
                             </ul>
                         </div>
 
-                        <!-- Columna Supervisores (Relacional Avanzado) -->
+                        <!-- Columna Supervisores -->
                         <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
                             <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Supervisores</h3>
                             <form onsubmit="UI.addSupervisor(event)" class="flex gap-2 mb-4">
@@ -512,7 +547,14 @@
             },
 
             // Funciones de Lógica de la Estructura
-            async changeGlobalSystem(val) { App.settings.sistemaGlobal = val; await DB.put('settings', App.settings); document.getElementById('nav-system-mode').innerText = `Sistema: ${val}`; },
+            async updateGlobalSettings() { 
+                App.settings.sistemaGlobal = document.getElementById('config-sistema').value; 
+                App.settings.fechaInicio = document.getElementById('config-fecha').value; 
+                App.settings.direccionRotacion = document.getElementById('config-rotacion').value; 
+                await DB.put('settings', App.settings); 
+                document.getElementById('nav-system-mode').innerText = `Sistema: ${App.settings.sistemaGlobal}`; 
+            },
+            
             async addMaquina(e) { e.preventDefault(); const val = document.getElementById('new-maq').value.trim(); if (val && !App.settings.maquinas.find(m => m.nombre === val)) { App.settings.maquinas.push({nombre: val, activa: true}); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
             async toggleMaquina(idx) { App.settings.maquinas[idx].activa = !App.settings.maquinas[idx].activa; await DB.put('settings', App.settings); this.renderAdminEstructura(); },
             async deleteMaquina(idx) { if(confirm("¿Seguro que desea eliminar esta máquina?")) { App.settings.maquinas.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
@@ -577,7 +619,7 @@
             },
 
             async renderEmployeeForm(dpi = null) {
-                let emp = { nombre: '', dpi: '', numEmpleado: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A', salarioBase: 5001.60, turnosVacacionesDisponibles: 10 };
+                let emp = { nombre: '', dpi: '', numEmpleado: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A', cuadrillaAntigua: '1', salarioBase: 5001.60, turnosVacacionesDisponibles: 10 };
                 if (dpi) emp = await DB.get('employees', dpi);
 
                 const supervisores = App.settings.supervisores || [];
@@ -645,6 +687,15 @@
                                             </optgroup>
                                         </select>
                                     </div>
+
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">Turno Antiguo (Para Comparativa)</label>
+                                        <select id="e-old" class="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50">
+                                            <option value="1" ${emp.cuadrillaAntigua==='1'?'selected':''}>Turno 1</option>
+                                            <option value="2" ${emp.cuadrillaAntigua==='2'?'selected':''}>Turno 2</option>
+                                            <option value="3" ${emp.cuadrillaAntigua==='3'?'selected':''}>Turno 3</option>
+                                        </select>
+                                    </div>
                                     
                                     <div><label class="block text-xs font-semibold mb-1">Vacaciones Disponibles (Turnos)</label><input type="number" id="e-vac" value="${emp.turnosVacacionesDisponibles}" max="10" min="0" class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
                                 </div>
@@ -693,6 +744,7 @@
                         maquina: document.getElementById('e-maq').value.trim(),
                         puesto: document.getElementById('e-puesto').value,
                         cuadrilla: document.getElementById('e-cuadrilla').value,
+                        cuadrillaAntigua: document.getElementById('e-old').value,
                         salarioBase: Number(document.getElementById('e-salario').value),
                         turnosVacacionesDisponibles: Number(document.getElementById('e-vac').value)
                     };
@@ -1221,7 +1273,7 @@
 
                     let shift;
                     if (App.settings.sistemaGlobal === 'Antiguo') {
-                        shift = App.getOldShiftForDate(dateStr, '1');
+                        shift = App.getOldShiftForDate(dateStr, emp.cuadrillaAntigua || '1');
                         if (shift === 'M') { bgClass = 'old-manana'; label = 'Mañ (6-14)'; }
                         else if (shift === 'T') { bgClass = 'old-tarde'; label = 'Tar (14-21)'; }
                         else if (shift === 'N') { bgClass = 'old-noche'; label = 'Noc (21-6)'; }
