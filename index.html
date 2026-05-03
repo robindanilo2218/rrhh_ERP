@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TurnoSync - Sistema Integral 2-2-3 y Administrativo</title>
+    <title>TurnoSync - ERP Laboral y Talento</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome -->
@@ -24,7 +24,6 @@
         .old-tarde { background-color: #ffedd5; border: 1px solid #fdba74; color: #9a3412; }
         .old-noche { background-color: #e2e8f0; border: 1px solid #cbd5e1; color: #334155; }
         
-        /* Motor de Impresión Inteligente */
         @media print {
             .no-print { display: none !important; }
             body { background-color: white !important; color: black !important; }
@@ -45,7 +44,7 @@
             <div class="flex items-center justify-between h-16">
                 <div class="flex items-center gap-3">
                     <i class="fa-solid fa-industry text-2xl text-blue-300"></i>
-                    <span class="font-bold text-xl tracking-wide">TurnoSync <span class="text-xs font-normal text-blue-200" id="nav-system-mode">Global</span></span>
+                    <span class="font-bold text-xl tracking-wide">TurnoSync <span class="text-xs font-normal text-blue-200" id="nav-system-mode">ERP</span></span>
                 </div>
                 <div id="nav-user-info" class="hidden flex items-center gap-4">
                     <span id="nav-user-name" class="text-sm font-medium hidden sm:block"></span>
@@ -64,7 +63,7 @@
     </main>
 
     <footer class="bg-slate-200 text-slate-500 text-center py-4 text-xs mt-auto no-print">
-        &copy; 2026 TurnoSync Industrial - Modelo 2-2-3 y Administrativo. Corrugadora Guatemala S.A.
+        &copy; 2026 TurnoSync Industrial - Modelo Integral de Turnos y Talento. Corrugadora Guatemala S.A.
     </footer>
 
     <script>
@@ -82,7 +81,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v13',
+            dbName: 'TurnoSyncDB_v15',
             version: 1,
             db: null,
             init() {
@@ -118,18 +117,40 @@
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
                     if (settings.telefonoRRHH === undefined) settings.telefonoRRHH = '';
 
+                    // Catálogo de Competencias y Certificaciones
+                    if (!settings.competencias) {
+                        settings.competencias = ['LOTO (Bloqueo y Etiquetado)', 'Manejo de Montacargas', 'Electricidad Industrial', 'Mecánica Preventiva', 'Normas ISO 9001', 'Primeros Auxilios'];
+                    }
+
+                    // Migración a Puestos como Objetos {nombre, cantidad}
                     if (!settings.maquinas) {
                         settings.maquinas = [{ 
-                            nombre: 'Maquina 01', 
+                            nombre: 'Corrugadora Principal', 
                             activa: true,
-                            puestos: ['Operador', 'Ayudante', 'Tintero', 'Alimentador', 'Entarimador 1', 'Entarimador 2']
+                            puestos: [
+                                {nombre: 'Operador A', cantidad: 1}, 
+                                {nombre: 'Electricista', cantidad: 2}, 
+                                {nombre: 'Ayudante', cantidad: 3}
+                            ],
+                            competenciasRequeridas: ['LOTO (Bloqueo y Etiquetado)', 'Electricidad Industrial']
                         }];
+                    } else {
+                        // Migrar strings antiguos a objetos si es necesario
+                        settings.maquinas.forEach(m => {
+                            if (m.puestos && m.puestos.length > 0 && typeof m.puestos[0] === 'string') {
+                                m.puestos = m.puestos.map(p => ({ nombre: p, cantidad: 1 }));
+                            }
+                            if(!m.competenciasRequeridas) m.competenciasRequeridas = [];
+                        });
                     }
                     
                     if (!settings.supervisores) {
-                        settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Maquina 01'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'] }];
+                        settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Corrugadora Principal'], cuadrillas: ['A', 'B', 'C', 'D', 'Oficina', '1', '2', '3'] }];
                     }
                     
+                    // Catálogo de Puestos global (para autocompletado general)
+                    if (!settings.puestos) settings.puestos = ['Operador A', 'Electricista', 'Ayudante', 'Tintero', 'Entarimador'];
+
                     await this.put('settings', settings);
                     resolve();
                 });
@@ -176,9 +197,7 @@
                 const employees = await this.getAll('employees');
                 const settings = await this.getAll('settings');
                 const supInfo = settings.supervisores.find(s => s.nombre === supName);
-                
                 const team = employees.filter(e => e.supervisor === supName && (supInfo.cuadrillas||[]).includes(e.cuadrilla));
-                
                 const blob = new Blob([JSON.stringify({ employees: team }, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `TurnoSync_Reporte_${supName.replace(/\s+/g, '_')}.json`; a.click();
             },
@@ -194,9 +213,13 @@
                     if (data.employees) {
                         for (const newEmp of data.employees) {
                             const existingEmp = await this.get('employees', newEmp.dpi);
-                            if (existingEmp && existingEmp.historial) {
-                                newEmp.historial = existingEmp.historial;
+                            if (existingEmp) {
+                                if (existingEmp.historial) newEmp.historial = existingEmp.historial;
+                                if (existingEmp.reportesActuales && !newEmp.reportesActuales) newEmp.reportesActuales = existingEmp.reportesActuales;
                             }
+                            // Migraciones de empleados
+                            if(!newEmp.competencias) newEmp.competencias = [];
+                            if(!newEmp.meritos) newEmp.meritos = '';
                             await this.put('employees', newEmp);
                         }
                     }
@@ -213,7 +236,7 @@
         // ==========================================
         const App = {
             currentUser: null, role: null, settings: null,
-            calendarViewMode: 'new',
+            calendarViewMode: 'reportes', 
             
             patternA: ['D','D','L','L','D','D','D','L','L','D','D','L','L','L','N','N','L','L','N','N','N','L','L','N','N','L','L','L'],
             patternB: ['N','N','L','L','N','N','N','L','L','N','N','L','L','L','D','D','L','L','D','D','D','L','L','D','D','L','L','L'],
@@ -244,9 +267,7 @@
                 const emp = await DB.get('employees', dpi);
                 if (emp && emp.numEmpleado === numEmpleado && emp.clave === clave) {
                     this.currentUser = emp;
-                    
                     const isSupervisor = this.settings.supervisores.find(s => s.nombre.toLowerCase() === emp.nombre.toLowerCase());
-                    
                     if (isSupervisor) {
                         this.role = 'supervisor';
                         this.currentUser.supervisorInfo = isSupervisor; 
@@ -254,7 +275,7 @@
                         UI.renderSupervisorDashboard();
                     } else {
                         this.role = 'employee'; 
-                        this.calendarViewMode = 'boleta'; 
+                        this.calendarViewMode = 'reportes'; 
                         this.updateNav(); 
                         UI.renderEmployeeDashboard();
                     }
@@ -275,7 +296,7 @@
                             <div class="text-center mb-6">
                                 <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><i class="fa-solid fa-users text-2xl text-blue-800"></i></div>
                                 <h2 class="text-2xl font-bold text-slate-800">Portal de Acceso</h2>
-                                <p class="text-sm text-slate-500 mt-1">Ingresa para ver tu turno, boleta o panel de control</p>
+                                <p class="text-sm text-slate-500 mt-1">Ingresa para ver tu turno, reportar horas o ver boletas</p>
                             </div>
                             <form id="login-form" class="space-y-4">
                                 <div><input type="text" id="login-dpi" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Ingresa tu DPI" required></div>
@@ -293,11 +314,7 @@
                     </div>`;
                 document.getElementById('login-form').addEventListener('submit', (e) => { 
                     e.preventDefault(); 
-                    this.login(
-                        document.getElementById('login-dpi').value.trim(), 
-                        document.getElementById('login-num').value.trim(),
-                        document.getElementById('login-clave').value.trim()
-                    ); 
+                    this.login(document.getElementById('login-dpi').value.trim(), document.getElementById('login-num').value.trim(), document.getElementById('login-clave').value.trim()); 
                 });
                 document.getElementById('import-json-input').addEventListener('change', (e) => {
                     const file = e.target.files[0]; if (!file) return; const reader = new FileReader();
@@ -311,13 +328,9 @@
                 const valorHora = sbm / 30 / 8;
                 const valorExtra = valorHora * 1.5;
 
-                // Set de horas por defecto basado en la Cuadrilla asignada
                 let defaultOrd = 56; let defaultExt = 28;
-                if (emp.cuadrilla === 'Fijo Noche') { 
-                    defaultOrd = 42; defaultExt = 42; 
-                } else if (emp.cuadrilla === 'Oficina') { 
-                    defaultOrd = 88; defaultExt = 0; // 44h a la semana * 2 semanas
-                }
+                if (emp.cuadrilla === 'Fijo Noche') { defaultOrd = 42; defaultExt = 42; } 
+                else if (emp.cuadrilla === 'Oficina') { defaultOrd = 88; defaultExt = 0; }
 
                 const hrsOrd = emp.hrsOrd !== undefined ? Number(emp.hrsOrd) : defaultOrd;
                 const hrsExt = emp.hrsExt !== undefined ? Number(emp.hrsExt) : defaultExt;
@@ -330,9 +343,7 @@
                 const bonoExtraordinario = 144.67; 
                 const feriados = Number(emp.feriados || 0);
 
-                // El Séptimo Día se calcula igual para todos en la catorcena
                 const septimoDia = (devOrd + devExt + bonoIncentivo) / 6;
-
                 const totalDevengado = devOrd + devExt + septimoDia + bonoIncentivo + bonoExtraordinario + adicionales + feriados;
 
                 const baseIgss = devOrd + devExt + septimoDia + adicionales + feriados;
@@ -362,12 +373,8 @@
                     if (!emp.historial) emp.historial = [];
                     emp.historial.unshift(boleta);
                     
-                    emp.adicionales = 0;
-                    emp.feriados = 0;
-                    emp.deduccionCafeteria = 0; 
-                    emp.isr = 0; 
+                    emp.adicionales = 0; emp.feriados = 0; emp.deduccionCafeteria = 0; emp.isr = 0; emp.reportesActuales = []; 
                     
-                    // Reset de horas basado en su turno
                     if(emp.cuadrilla === 'Fijo Noche') { emp.hrsOrd = 42; emp.hrsExt = 42; }
                     else if (emp.cuadrilla === 'Oficina') { emp.hrsOrd = 88; emp.hrsExt = 0; }
                     else { emp.hrsOrd = 56; emp.hrsExt = 28; } 
@@ -380,47 +387,36 @@
             
             getNewShiftForDate(dateStr, cuadrilla) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
-                
-                // Lógica especial para Horario de Oficina (Independiente del ancla, se basa en día de la semana)
                 if (cuadrilla === 'Oficina') {
-                    const dayOfWeek = targetDate.getDay(); // 0:Dom, 1:Lun, 2:Mar, 3:Mie, 4:Jue, 5:Vie, 6:Sab
-                    if (dayOfWeek >= 1 && dayOfWeek <= 5) return 'O'; // Oficina Día completo
-                    if (dayOfWeek === 6) return 'MD'; // Sábado Medio Día
-                    return 'L'; // Domingo Libre
+                    const dayOfWeek = targetDate.getDay(); 
+                    if (dayOfWeek >= 1 && dayOfWeek <= 5) return 'O'; 
+                    if (dayOfWeek === 6) return 'MD'; 
+                    return 'L'; 
                 }
-
-                // Lógica de Rotación y Fijos
                 const diffTime = targetDate.getTime() - this.getAnchorDate().getTime();
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                 
                 let result = 'L';
-                if (cuadrilla === 'Fijo Día') {
-                    let cycleDay = diffDays % 14; if (cycleDay < 0) cycleDay += 14;
-                    result = this.patternFijoDia[cycleDay];
-                } else if (cuadrilla === 'Fijo Noche') {
-                    let cycleDay = diffDays % 14; if (cycleDay < 0) cycleDay += 14;
-                    result = this.patternFijoNoche[cycleDay];
-                } else {
-                    let cycleDay = diffDays % 28; if (cycleDay < 0) cycleDay += 28;
-                    if (cuadrilla === 'A') result = this.patternA[cycleDay];
-                    else if (cuadrilla === 'B') result = this.patternB[cycleDay];
-                    else if (cuadrilla === 'C') result = this.patternC[cycleDay];
-                    else if (cuadrilla === 'D') result = this.patternD[cycleDay];
+                if (cuadrilla === 'Fijo Día') { let cd = diffDays % 14; if (cd < 0) cd += 14; result = this.patternFijoDia[cd]; } 
+                else if (cuadrilla === 'Fijo Noche') { let cd = diffDays % 14; if (cd < 0) cd += 14; result = this.patternFijoNoche[cd]; } 
+                else {
+                    let cd = diffDays % 28; if (cd < 0) cd += 28;
+                    if (cuadrilla === 'A') result = this.patternA[cd];
+                    else if (cuadrilla === 'B') result = this.patternB[cd];
+                    else if (cuadrilla === 'C') result = this.patternC[cd];
+                    else if (cuadrilla === 'D') result = this.patternD[cd];
                 }
                 return result;
             },
             
             getOldShiftForDate(dateStr, cuadrillaAntigua) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
-                
-                // Si es administrativo en el antiguo, asume mismo calendario de oficina
                 if (cuadrillaAntigua === 'Oficina') {
                     const dayOfWeek = targetDate.getDay();
                     if (dayOfWeek >= 1 && dayOfWeek <= 5) return 'O';
                     if (dayOfWeek === 6) return 'MD';
                     return 'L';
                 }
-
                 const diffTime = targetDate.getTime() - this.getAnchorDate().getTime();
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                 
@@ -433,6 +429,14 @@
                 
                 const currentCycle = this.settings.direccionRotacion === 'adelante' ? this.oldCycleAdelante : this.oldCycleAtras;
                 return currentCycle[cycleDay];
+            },
+            
+            calcularHorasDiferencia(entrada, salida) {
+                if(!entrada || !salida) return 0;
+                const dEnt = new Date(`2000-01-01T${entrada}:00`);
+                let dSal = new Date(`2000-01-01T${salida}:00`);
+                if (dSal < dEnt) dSal.setDate(dSal.getDate() + 1);
+                return (dSal - dEnt) / (1000 * 60 * 60);
             }
         };
 
@@ -449,10 +453,10 @@
                             <div class="flex gap-2 w-full md:w-auto overflow-x-auto pb-1">
                                 <button onclick="UI.showAdminTab('estructura')" id="tab-btn-estructura" class="admin-tab-btn bg-slate-200 text-slate-700 px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap"><i class="fa-solid fa-building mr-1"></i> Estructura</button>
                                 <button onclick="UI.showAdminTab('empleados')" id="tab-btn-empleados" class="admin-tab-btn bg-slate-200 text-slate-700 px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap"><i class="fa-solid fa-address-card mr-1"></i> Empleados</button>
-                                <button onclick="UI.showAdminTab('procesos')" id="tab-btn-procesos" class="admin-tab-btn bg-slate-200 text-slate-700 px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap"><i class="fa-solid fa-sitemap mr-1"></i> Procesos</button>
+                                <button onclick="UI.showAdminTab('procesos')" id="tab-btn-procesos" class="admin-tab-btn bg-slate-200 text-slate-700 px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap"><i class="fa-solid fa-sitemap mr-1"></i> Procesos / Skills</button>
                                 <button onclick="UI.showAdminTab('planillas')" id="tab-btn-planillas" class="admin-tab-btn bg-slate-200 text-slate-700 px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap"><i class="fa-solid fa-money-check-dollar mr-1"></i> Planillas</button>
                                 <button onclick="UI.showAdminTab('historial')" id="tab-btn-historial" class="admin-tab-btn bg-slate-200 text-slate-700 px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap"><i class="fa-solid fa-clock-rotate-left mr-1"></i> Historial</button>
-                                <button onclick="DB.exportJSON()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap" title="Exportar Backup Global de RRHH"><i class="fa-solid fa-database mr-1"></i> Backup</button>
+                                <button onclick="DB.exportJSON()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow text-sm font-medium whitespace-nowrap" title="Backup Base de Datos"><i class="fa-solid fa-database mr-1"></i> Backup</button>
                             </div>
                         </div>
                         <div id="admin-content-area" class="bg-white rounded-lg shadow-sm border border-slate-200 p-4 sm:p-6 min-h-[500px]"></div>
@@ -476,46 +480,30 @@
                 else if (tab === 'procesos') this.renderAdminProcesos();
             },
 
-            // --- TAB: ESTRUCTURA ORGANIZACIONAL (CATÁLOGOS) ---
+            // --- TAB: ESTRUCTURA ORGANIZACIONAL ---
             async renderAdminEstructura() {
                 const contentArea = document.getElementById('admin-content-area');
                 const maquinas = App.settings.maquinas || [];
                 const supervisores = App.settings.supervisores || [];
-                const listCuadrillas = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'];
+                const competencias = App.settings.competencias || [];
+                
+                // Lista de Cuadrillas y Turnos para checkbox
+                const turnosOld = ['1', '2', '3', 'Oficina'];
+                const turnosNew = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'];
+                const listCuadrillas = App.settings.sistemaGlobal === 'Antiguo' ? turnosOld : turnosNew;
 
                 let html = `
                     <div class="mb-6 flex flex-col items-start gap-4">
                         <div>
-                            <h2 class="text-xl font-bold text-slate-800">Estructura Organizacional</h2>
-                            <p class="text-xs text-slate-500">Gestione los catálogos globales de la empresa, fechas ancla y permisos de supervisores.</p>
+                            <h2 class="text-xl font-bold text-slate-800">Estructura, Catálogos y Competencias</h2>
+                            <p class="text-xs text-slate-500">Administra áreas, requerimientos de talento y jerarquías operativas.</p>
                         </div>
                         
-                        <!-- CONFIGURACIÓN GLOBAL DINÁMICA -->
                         <div class="w-full bg-blue-50 border border-blue-200 p-4 rounded-lg grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div>
-                                <label class="text-xs font-bold text-blue-800 mb-1 block">Sistema Global Activo:</label>
-                                <select id="config-sistema" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
-                                    <option value="2-2-3" ${App.settings.sistemaGlobal === '2-2-3' ? 'selected' : ''}>2-2-3 Rotativo / Fijo</option>
-                                    <option value="Antiguo" ${App.settings.sistemaGlobal === 'Antiguo' ? 'selected' : ''}>Antiguo (3 Turnos)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="text-xs font-bold text-blue-800 mb-1 block">Fecha de Inicio (Ancla):</label>
-                                <input type="date" id="config-fecha" value="${App.settings.fechaInicio}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
-                                <p class="text-[9px] text-blue-600 mt-1">El ciclo rota desde esta fecha.</p>
-                            </div>
-                            <div>
-                                <label class="text-xs font-bold text-blue-800 mb-1 block">Rotación Sistema Antiguo:</label>
-                                <select id="config-rotacion" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()">
-                                    <option value="atras" ${App.settings.direccionRotacion === 'atras' ? 'selected' : ''}>Atrás (Mañ -> Noc -> Tar)</option>
-                                    <option value="adelante" ${App.settings.direccionRotacion === 'adelante' ? 'selected' : ''}>Adelante (Mañ -> Tar -> Noc)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="text-xs font-bold text-green-700 mb-1 block"><i class="fa-brands fa-whatsapp"></i> Teléfono RRHH:</label>
-                                <input type="text" id="config-tel-rrhh" value="${App.settings.telefonoRRHH || ''}" placeholder="Ej. 55550000" class="w-full border border-green-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-green-500" onchange="UI.updateGlobalSettings()">
-                                <p class="text-[9px] text-green-600 mt-1">Para recibir reportes de supervisores.</p>
-                            </div>
+                            <div><label class="text-xs font-bold text-blue-800 mb-1 block">Sistema Global Activo:</label><select id="config-sistema" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()"><option value="2-2-3" ${App.settings.sistemaGlobal === '2-2-3' ? 'selected' : ''}>2-2-3 Rotativo / Fijo</option><option value="Antiguo" ${App.settings.sistemaGlobal === 'Antiguo' ? 'selected' : ''}>Antiguo (3 Turnos)</option></select></div>
+                            <div><label class="text-xs font-bold text-blue-800 mb-1 block">Fecha de Inicio (Ancla):</label><input type="date" id="config-fecha" value="${App.settings.fechaInicio}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()"></div>
+                            <div><label class="text-xs font-bold text-blue-800 mb-1 block">Rotación Sistema Antiguo:</label><select id="config-rotacion" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()"><option value="atras" ${App.settings.direccionRotacion === 'atras' ? 'selected' : ''}>Atrás (Mañ -> Noc -> Tar)</option><option value="adelante" ${App.settings.direccionRotacion === 'adelante' ? 'selected' : ''}>Adelante (Mañ -> Tar -> Noc)</option></select></div>
+                            <div><label class="text-xs font-bold text-green-700 mb-1 block"><i class="fa-brands fa-whatsapp"></i> Teléfono RRHH:</label><input type="text" id="config-tel-rrhh" value="${App.settings.telefonoRRHH || ''}" class="w-full border border-green-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-green-500" onchange="UI.updateGlobalSettings()"></div>
                         </div>
                     </div>
 
@@ -523,9 +511,11 @@
                         
                         <!-- Columna Máquinas y Puestos -->
                         <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-microchip text-blue-600 mr-2"></i> Departamentos y Puestos de Trabajo</h3>
+                            <div class="flex justify-between items-center border-b border-slate-200 pb-2 mb-3">
+                                <h3 class="font-bold text-slate-700"><i class="fa-solid fa-microchip text-blue-600 mr-2"></i> Departamentos y Plazas</h3>
+                            </div>
                             <form onsubmit="UI.addMaquina(event)" class="flex gap-2 mb-4">
-                                <input type="text" id="new-maq" placeholder="Nombre (Ej. Máquina 1, Admon...)" class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                <input type="text" id="new-maq" placeholder="Nombre (Ej. Corrugadora 1...)" class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
                                 <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
                             </form>
                             <ul class="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
@@ -533,25 +523,49 @@
                                     <li class="flex flex-col bg-white p-3 border border-slate-200 rounded shadow-sm">
                                         <div class="flex justify-between items-center mb-2">
                                             <div class="flex items-center gap-2">
-                                                <button onclick="UI.toggleMaquina(${idx})" class="text-xl ${m.activa ? 'text-green-500' : 'text-slate-300'}" title="${m.activa ? 'Activo' : 'Inactivo'}">
-                                                    <i class="fa-solid ${m.activa ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
-                                                </button>
+                                                <button onclick="UI.toggleMaquina(${idx})" class="text-xl ${m.activa ? 'text-green-500' : 'text-slate-300'}" title="${m.activa ? 'Activo' : 'Inactivo'}"><i class="fa-solid ${m.activa ? 'fa-toggle-on' : 'fa-toggle-off'}"></i></button>
                                                 <span class="text-sm font-bold ${m.activa ? 'text-slate-800' : 'text-slate-400 line-through'}">${m.nombre}</span>
                                             </div>
-                                            <button onclick="UI.deleteMaquina(${idx})" class="text-red-500 hover:text-red-700 px-2"><i class="fa-solid fa-trash-can"></i></button>
+                                            <div class="flex items-center gap-2">
+                                                <select class="border border-slate-200 rounded text-[10px] py-1 bg-slate-50 text-slate-500 max-w-[100px]" onchange="UI.cloneMachineConfig(${idx}, this.value); this.value='';">
+                                                    <option value="">Clonar de...</option>
+                                                    ${maquinas.filter((_, i) => i !== idx).map(mx => `<option value="${mx.nombre}">${mx.nombre}</option>`).join('')}
+                                                </select>
+                                                <button onclick="UI.deleteMaquina(${idx})" class="text-red-500 hover:text-red-700 px-1"><i class="fa-solid fa-trash-can"></i></button>
+                                            </div>
                                         </div>
-                                        <div class="border-t border-slate-100 pt-2">
-                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Puestos Requeridos (Matriz de Vacantes):</label>
+                                        
+                                        <!-- Configuración de Plazas -->
+                                        <div class="border-t border-slate-100 pt-2 mb-2">
+                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Plazas Requeridas por Turno:</label>
                                             <div class="flex flex-wrap gap-1.5 mb-2">
                                                 ${(m.puestos || []).map((p, pIdx) => `
-                                                    <span class="inline-flex items-center bg-indigo-50 border border-indigo-200 text-indigo-700 rounded px-1.5 py-0.5 text-[10px]">
-                                                        ${p} <button onclick="UI.deletePuestoMaquina(${idx}, ${pIdx})" class="ml-1 text-red-500 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
+                                                    <span class="inline-flex items-center bg-indigo-50 border border-indigo-200 text-indigo-800 rounded px-1.5 py-0.5 text-[10px] font-medium">
+                                                        <span class="bg-indigo-200 text-indigo-900 rounded-sm px-1 mr-1">${p.cantidad}</span> ${p.nombre} 
+                                                        <button onclick="UI.deletePuestoMaquina(${idx}, ${pIdx})" class="ml-1.5 text-red-400 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
                                                     </span>
                                                 `).join('')}
                                             </div>
                                             <div class="flex gap-1">
-                                                <input type="text" id="new-pue-${idx}" placeholder="Agregar puesto..." class="w-full border border-slate-300 rounded px-2 py-0.5 text-[10px] focus:ring-1 focus:ring-blue-500">
+                                                <input type="number" id="new-pue-cant-${idx}" value="1" min="1" class="w-12 border border-slate-300 rounded px-1 py-0.5 text-[10px] text-center focus:ring-1 focus:ring-blue-500" title="Cantidad Necesaria">
+                                                <input type="text" id="new-pue-${idx}" placeholder="Nombre del Puesto..." class="w-full border border-slate-300 rounded px-2 py-0.5 text-[10px] focus:ring-1 focus:ring-blue-500">
                                                 <button onclick="UI.addPuestoMaquina(${idx})" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[10px]"><i class="fa-solid fa-plus"></i></button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Certificaciones Exigidas -->
+                                        <div class="border-t border-slate-100 pt-2 bg-amber-50/50 p-2 rounded">
+                                            <label class="text-[10px] font-bold text-amber-700 uppercase block mb-1"><i class="fa-solid fa-certificate"></i> Certificaciones Exigidas para Operar:</label>
+                                            <div class="flex flex-wrap gap-1">
+                                                ${competencias.map(c => `
+                                                    <label class="inline-flex items-center bg-white border border-slate-200 rounded px-1 py-0.5 text-[9px] cursor-pointer hover:bg-amber-50">
+                                                        <input type="checkbox" class="mr-1 rounded text-amber-600 focus:ring-amber-500 w-2.5 h-2.5"
+                                                            ${(m.competenciasRequeridas || []).includes(c) ? 'checked' : ''}
+                                                            onchange="UI.toggleMaquinaCompetencia(${idx}, '${c}', this.checked)">
+                                                        ${c}
+                                                    </label>
+                                                `).join('')}
+                                                ${competencias.length === 0 ? '<span class="text-[9px] text-slate-400">Agregue competencias en el panel inferior.</span>' : ''}
                                             </div>
                                         </div>
                                     </li>
@@ -559,57 +573,71 @@
                             </ul>
                         </div>
 
-                        <!-- Columna Supervisores -->
-                        <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Jefaturas / Supervisores</h3>
-                            <form onsubmit="UI.addSupervisor(event)" class="flex gap-2 mb-4">
-                                <input type="text" id="new-sup" placeholder="Nombre exacto..." class="w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
-                                <input type="text" id="new-sup-tel" placeholder="WhatsApp..." class="w-1/3 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
-                                <button type="submit" class="w-1/6 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
-                            </form>
-                            <p class="text-[9px] text-slate-500 mb-2 leading-tight">Si el nombre coincide con un Empleado registrado, él accederá al Portal de Supervisor.</p>
-                            <ul class="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
-                                ${supervisores.map((s, idx) => `
-                                    <li class="flex flex-col bg-white p-3 border border-slate-200 rounded shadow-sm">
-                                        <div class="flex justify-between items-center mb-2">
-                                            <div>
-                                                <span class="text-sm font-bold text-blue-900 block"><i class="fa-solid fa-shield-halved text-blue-500 mr-1"></i> ${s.nombre}</span>
-                                                <span class="text-[10px] text-green-600 font-bold"><i class="fa-brands fa-whatsapp"></i> ${s.telefono || 'Sin número'}</span>
-                                            </div>
-                                            <div class="flex gap-2">
-                                                ${s.telefono ? `<a href="https://wa.me/502${s.telefono}?text=Hola%20${encodeURIComponent(s.nombre)},%20te%20adjunto%20el%20archivo%20JSON%20con%20tus%20permisos%20de%20Supervisor.%20Recuerda%20importarlo%20en%20la%20App." target="_blank" class="text-green-500 hover:text-green-700" title="Enviar Archivo por WhatsApp"><i class="fa-brands fa-whatsapp"></i></a>` : ''}
+                        <div class="space-y-6">
+                            <!-- Catálogo de Competencias -->
+                            <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                                <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-graduation-cap text-orange-500 mr-2"></i> Catálogo de Competencias y Certificaciones</h3>
+                                <form onsubmit="UI.addCompetencia(event)" class="flex gap-2 mb-4">
+                                    <input type="text" id="new-comp" placeholder="Ej. LOTO, Electricidad Avanzada..." class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-orange-500" required>
+                                    <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
+                                </form>
+                                <div class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                                    ${competencias.map((c, idx) => `
+                                        <span class="inline-flex items-center bg-orange-100 border border-orange-200 text-orange-800 rounded px-2 py-1 text-xs">
+                                            ${c} <button onclick="UI.deleteCompetencia(${idx})" class="ml-2 text-red-400 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
+                                        </span>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <!-- Columna Supervisores -->
+                            <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                                <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Jefaturas / Supervisores</h3>
+                                <form onsubmit="UI.addSupervisor(event)" class="flex gap-2 mb-4">
+                                    <input type="text" id="new-sup" placeholder="Nombre exacto..." class="w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                    <input type="text" id="new-sup-tel" placeholder="WhatsApp..." class="w-1/3 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                    <button type="submit" class="w-1/6 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
+                                </form>
+                                <ul class="space-y-3 max-h-[22rem] overflow-y-auto pr-1">
+                                    ${supervisores.map((s, idx) => `
+                                        <li class="flex flex-col bg-white p-3 border border-slate-200 rounded shadow-sm">
+                                            <div class="flex justify-between items-center mb-2">
+                                                <div>
+                                                    <span class="text-sm font-bold text-blue-900 block"><i class="fa-solid fa-shield-halved text-blue-500 mr-1"></i> ${s.nombre}</span>
+                                                    <span class="text-[10px] text-green-600 font-bold"><i class="fa-brands fa-whatsapp"></i> ${s.telefono || 'Sin número'}</span>
+                                                </div>
                                                 <button onclick="UI.deleteSupervisor(${idx})" class="text-red-500 hover:text-red-700 px-1"><i class="fa-solid fa-trash-can"></i></button>
                                             </div>
-                                        </div>
-                                        <div class="border-t border-slate-100 pt-2 mb-2">
-                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Áreas a Cargo:</label>
-                                            <div class="flex flex-wrap gap-1.5">
-                                                ${maquinas.filter(m => m.activa).map(m => `
-                                                    <label class="inline-flex items-center bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:bg-blue-50">
-                                                        <input type="checkbox" class="mr-1 rounded text-blue-600 focus:ring-blue-500 w-3 h-3"
-                                                            ${(s.maquinas || []).includes(m.nombre) ? 'checked' : ''}
-                                                            onchange="UI.toggleSupervisorOption(${idx}, 'maquinas', '${m.nombre}', this.checked)">
-                                                        ${m.nombre}
-                                                    </label>
-                                                `).join('')}
+                                            <div class="border-t border-slate-100 pt-2 mb-2">
+                                                <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Áreas a Cargo:</label>
+                                                <div class="flex flex-wrap gap-1.5">
+                                                    ${maquinas.filter(m => m.activa).map(m => `
+                                                        <label class="inline-flex items-center bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:bg-blue-50">
+                                                            <input type="checkbox" class="mr-1 rounded text-blue-600 focus:ring-blue-500 w-3 h-3"
+                                                                ${(s.maquinas || []).includes(m.nombre) ? 'checked' : ''}
+                                                                onchange="UI.toggleSupervisorOption(${idx}, 'maquinas', '${m.nombre}', this.checked)">
+                                                            ${m.nombre}
+                                                        </label>
+                                                    `).join('')}
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div class="border-t border-slate-100 pt-2">
-                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Turnos a Cargo:</label>
-                                            <div class="flex flex-wrap gap-1.5">
-                                                ${listCuadrillas.map(c => `
-                                                    <label class="inline-flex items-center bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:bg-amber-100">
-                                                        <input type="checkbox" class="mr-1 rounded text-amber-600 focus:ring-amber-500 w-3 h-3"
-                                                            ${(s.cuadrillas || []).includes(c) ? 'checked' : ''}
-                                                            onchange="UI.toggleSupervisorOption(${idx}, 'cuadrillas', '${c}', this.checked)">
-                                                        ${c}
-                                                    </label>
-                                                `).join('')}
+                                            <div class="border-t border-slate-100 pt-2">
+                                                <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">El Mapa de Procesos mostrará las columnas (Turnos):</label>
+                                                <div class="flex flex-wrap gap-1.5">
+                                                    ${listCuadrillas.map(c => `
+                                                        <label class="inline-flex items-center bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:bg-amber-100">
+                                                            <input type="checkbox" class="mr-1 rounded text-amber-600 focus:ring-amber-500 w-3 h-3"
+                                                                ${(s.cuadrillas || []).includes(c) ? 'checked' : ''}
+                                                                onchange="UI.toggleSupervisorOption(${idx}, 'cuadrillas', '${c}', this.checked)">
+                                                            ${c}
+                                                        </label>
+                                                    `).join('')}
+                                                </div>
                                             </div>
-                                        </div>
-                                    </li>
-                                `).join('')}
-                            </ul>
+                                        </li>
+                                    `).join('')}
+                                </ul>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -623,30 +651,41 @@
                 App.settings.telefonoRRHH = document.getElementById('config-tel-rrhh').value.trim(); 
                 await DB.put('settings', App.settings); 
                 document.getElementById('nav-system-mode').innerText = `Sistema: ${App.settings.sistemaGlobal}`; 
+                this.renderAdminEstructura(); // Re-render to update cuadrilla lists
             },
             
             async addMaquina(e) { 
-                e.preventDefault(); 
-                const val = document.getElementById('new-maq').value.trim(); 
+                e.preventDefault(); const val = document.getElementById('new-maq').value.trim(); 
                 if (val && !App.settings.maquinas.find(m => m.nombre === val)) { 
-                    App.settings.maquinas.push({nombre: val, activa: true, puestos: []}); 
-                    await DB.put('settings', App.settings); 
-                    this.renderAdminEstructura(); 
+                    App.settings.maquinas.push({nombre: val, activa: true, puestos: [], competenciasRequeridas: []}); 
+                    await DB.put('settings', App.settings); this.renderAdminEstructura(); 
                 } 
             },
             async toggleMaquina(idx) { App.settings.maquinas[idx].activa = !App.settings.maquinas[idx].activa; await DB.put('settings', App.settings); this.renderAdminEstructura(); },
             async deleteMaquina(idx) { if(confirm("¿Seguro que desea eliminar esta área/máquina?")) { App.settings.maquinas.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
+            async cloneMachineConfig(idx, sourceName) {
+                if(!sourceName) return;
+                const source = App.settings.maquinas.find(m => m.nombre === sourceName);
+                if(source && confirm(`¿Copiar plazas y certificaciones de ${sourceName}? Reemplazará la configuración actual.`)) {
+                    App.settings.maquinas[idx].puestos = JSON.parse(JSON.stringify(source.puestos || []));
+                    App.settings.maquinas[idx].competenciasRequeridas = JSON.parse(JSON.stringify(source.competenciasRequeridas || []));
+                    await DB.put('settings', App.settings);
+                    this.renderAdminEstructura();
+                }
+            },
             
             async addPuestoMaquina(idx) {
                 const input = document.getElementById(`new-pue-${idx}`);
+                const cantInput = document.getElementById(`new-pue-cant-${idx}`);
                 const val = input.value.trim();
+                const cant = parseInt(cantInput.value) || 1;
                 if (val) {
                     if(!App.settings.maquinas[idx].puestos) App.settings.maquinas[idx].puestos = [];
-                    if(!App.settings.maquinas[idx].puestos.includes(val)) {
-                        App.settings.maquinas[idx].puestos.push(val);
-                        await DB.put('settings', App.settings);
-                        this.renderAdminEstructura();
-                    }
+                    const existing = App.settings.maquinas[idx].puestos.find(p => p.nombre === val);
+                    if(existing) existing.cantidad = cant;
+                    else App.settings.maquinas[idx].puestos.push({ nombre: val, cantidad: cant });
+                    await DB.put('settings', App.settings);
+                    this.renderAdminEstructura();
                 }
             },
             async deletePuestoMaquina(mIdx, pIdx) {
@@ -656,15 +695,21 @@
                     this.renderAdminEstructura();
                 }
             },
+            async toggleMaquinaCompetencia(mIdx, comp, checked) {
+                if(!App.settings.maquinas[mIdx].competenciasRequeridas) App.settings.maquinas[mIdx].competenciasRequeridas = [];
+                if(checked) App.settings.maquinas[mIdx].competenciasRequeridas.push(comp);
+                else App.settings.maquinas[mIdx].competenciasRequeridas = App.settings.maquinas[mIdx].competenciasRequeridas.filter(c => c !== comp);
+                await DB.put('settings', App.settings);
+            },
+
+            async addCompetencia(e) { e.preventDefault(); const val = document.getElementById('new-comp').value.trim(); if (val && !App.settings.competencias.includes(val)) { App.settings.competencias.push(val); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
+            async deleteCompetencia(idx) { if(confirm("¿Eliminar competencia del catálogo global?")) { App.settings.competencias.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
 
             async addSupervisor(e) { 
-                e.preventDefault(); 
-                const val = document.getElementById('new-sup').value.trim(); 
-                const tel = document.getElementById('new-sup-tel').value.trim();
+                e.preventDefault(); const val = document.getElementById('new-sup').value.trim(); const tel = document.getElementById('new-sup-tel').value.trim();
                 if (val && !App.settings.supervisores.find(s => s.nombre === val)) { 
                     App.settings.supervisores.push({nombre: val, telefono: tel, maquinas: [], cuadrillas: []}); 
-                    await DB.put('settings', App.settings); 
-                    this.renderAdminEstructura(); 
+                    await DB.put('settings', App.settings); this.renderAdminEstructura(); 
                 } 
             },
             async deleteSupervisor(idx) { if(confirm("¿Seguro que desea eliminar esta jefatura?")) { App.settings.supervisores.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
@@ -683,8 +728,8 @@
                 let html = `
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                         <div>
-                            <h2 class="text-xl font-bold text-slate-800">Maestro de Empleados</h2>
-                            <p class="text-xs text-slate-500">Altas, bajas y modificaciones estructurales (Sueldos, Puestos, Máquinas).</p>
+                            <h2 class="text-xl font-bold text-slate-800">Maestro de Empleados y Talento</h2>
+                            <p class="text-xs text-slate-500">Altas, bajas, salarios y perfil de competencias del personal.</p>
                         </div>
                         <button onclick="UI.renderEmployeeForm()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow text-sm font-medium"><i class="fa-solid fa-user-plus mr-1"></i> Agregar Empleado</button>
                     </div>
@@ -696,7 +741,7 @@
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Contacto</th>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Puesto / Área</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600">Turno Asig.</th>
-                                    <th class="px-4 py-3 text-right font-semibold text-slate-600">Sueldo Base</th>
+                                    <th class="px-4 py-3 text-center font-semibold text-slate-600">Certificac.</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600">Acciones</th>
                                 </tr>
                             </thead>
@@ -707,17 +752,16 @@
                 else {
                     employees.sort((a,b) => (a.maquina||'').localeCompare(b.maquina||'')).forEach(emp => {
                         const telFormat = emp.telefono ? emp.telefono : 'Sin WhatsApp';
+                        const certCnt = (emp.competencias||[]).length;
                         html += `
                             <tr class="hover:bg-slate-50">
                                 <td class="px-4 py-3"><div class="font-bold text-slate-800">${emp.nombre}</div><div class="text-xs text-slate-500 font-mono">DPI: ${emp.dpi}</div></td>
                                 <td class="px-4 py-3"><div class="text-xs text-slate-600"><i class="fa-brands fa-whatsapp text-green-500"></i> ${telFormat}</div></td>
                                 <td class="px-4 py-3"><div class="font-medium text-blue-800">${emp.puesto}</div><div class="text-xs text-slate-500"><i class="fa-solid fa-industry text-[10px]"></i> ${emp.maquina || 'Sin asignar'}</div></td>
                                 <td class="px-4 py-3 text-center"><span class="bg-slate-100 text-slate-800 font-bold px-2 py-1 rounded text-xs border border-slate-300">${emp.cuadrilla}</span></td>
-                                <td class="px-4 py-3 text-right text-slate-700 font-medium">${App.formatMoney(emp.salarioBase)}</td>
+                                <td class="px-4 py-3 text-center"><span class="bg-orange-100 text-orange-800 font-bold px-2 py-1 rounded-full text-xs">${certCnt}</span></td>
                                 <td class="px-4 py-3 text-center">
-                                    <button onclick="UI.renderEmployeeForm('${emp.dpi}')" class="text-blue-600 hover:text-blue-800 px-2" title="Editar Empleado"><i class="fa-solid fa-pen-to-square"></i></button>
-                                    <button onclick="DB.exportEmployeeJSON('${emp.dpi}')" class="text-blue-600 hover:text-blue-800 px-2" title="Descargar Perfil Seguro"><i class="fa-solid fa-download"></i></button>
-                                    ${emp.telefono ? `<a href="https://wa.me/502${emp.telefono}?text=Hola%20${encodeURIComponent(emp.nombre)},%20te%20adjunto%20el%20archivo%20JSON%20de%20tu%20perfil%20para%20la%20App%20TurnoSync.%20(Recuerda%20importarlo%20en%20la%20pantalla%20de%20inicio)" target="_blank" class="text-green-500 hover:text-green-700 px-2" title="Enviar Archivo por WhatsApp"><i class="fa-brands fa-whatsapp text-lg"></i></a>` : ''}
+                                    <button onclick="UI.renderEmployeeForm('${emp.dpi}')" class="text-blue-600 hover:text-blue-800 px-2" title="Editar Perfil / Talento"><i class="fa-solid fa-pen-to-square"></i></button>
                                 </td>
                             </tr>
                         `;
@@ -728,15 +772,16 @@
             },
 
             async renderEmployeeForm(dpi = null) {
-                let emp = { nombre: '', dpi: '', numEmpleado: '', clave: '', telefono: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A', cuadrillaAntigua: '1', salarioBase: 5001.60, turnosVacacionesDisponibles: 10 };
+                let emp = { nombre: '', dpi: '', numEmpleado: '', clave: '', telefono: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A', cuadrillaAntigua: '1', salarioBase: 5001.60, turnosVacacionesDisponibles: 10, competencias: [], meritos: '' };
                 if (dpi) emp = await DB.get('employees', dpi);
 
                 const supervisores = App.settings.supervisores || [];
+                const catCompetencias = App.settings.competencias || [];
 
                 document.getElementById('admin-content-area').innerHTML = `
                     <div class="max-w-4xl mx-auto bg-white border border-slate-200 rounded-lg p-6 fade-in shadow-sm">
                         <div class="flex justify-between items-center mb-6 border-b pb-3">
-                            <h2 class="text-xl font-bold text-slate-800"><i class="fa-solid fa-address-card text-blue-600 mr-2"></i> ${dpi ? 'Editar' : 'Registrar'} Perfil del Empleado</h2>
+                            <h2 class="text-xl font-bold text-slate-800"><i class="fa-solid fa-address-card text-blue-600 mr-2"></i> ${dpi ? 'Editar' : 'Registrar'} Perfil Integral del Empleado</h2>
                             <button onclick="UI.showAdminTab('empleados')" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-xl"></i></button>
                         </div>
                         
@@ -744,7 +789,7 @@
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
                                 <!-- Columna 1: Personales -->
                                 <div class="space-y-4">
-                                    <h3 class="text-sm font-bold border-b border-slate-100 pb-1 text-slate-700">Datos Personales</h3>
+                                    <h3 class="text-sm font-bold border-b border-slate-100 pb-1 text-slate-700">Datos Básicos</h3>
                                     <div><label class="block text-xs font-semibold mb-1">Nombre Completo</label><input type="text" id="e-nombre" value="${emp.nombre}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500"></div>
                                     <div><label class="block text-xs font-semibold mb-1">DPI</label><input type="text" id="e-dpi" value="${emp.dpi}" ${dpi?'readonly':''} required class="w-full border border-slate-300 rounded px-3 py-2 text-sm ${dpi?'bg-slate-100':''}"></div>
                                     <div><label class="block text-xs font-semibold mb-1">No. Empleado</label><input type="text" id="e-num" value="${emp.numEmpleado}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
@@ -771,7 +816,7 @@
                                     </div>
                                     
                                     <div>
-                                        <label class="block text-xs font-semibold mb-1">Puesto Oficial</label>
+                                        <label class="block text-xs font-semibold mb-1">Plaza Oficial</label>
                                         <select id="e-puesto" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" ${!emp.maquina ? 'disabled' : ''}>
                                             <option value="">-- Seleccione Área Primero --</option>
                                         </select>
@@ -809,7 +854,7 @@
                                         </select>
                                     </div>
                                     
-                                    <div><label class="block text-xs font-semibold mb-1">Vacaciones Disponibles (Días/Turnos)</label><input type="number" id="e-vac" value="${emp.turnosVacacionesDisponibles}" min="0" class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
+                                    <div><label class="block text-xs font-semibold mb-1">Vacaciones Disponibles</label><input type="number" id="e-vac" value="${emp.turnosVacacionesDisponibles}" min="0" class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
                                 </div>
 
                                 <!-- Columna 3: Salario Base -->
@@ -822,7 +867,29 @@
                                     <div class="mt-4 space-y-2 text-sm text-slate-600 border-t border-slate-200 pt-3">
                                         <div class="flex justify-between"><span>Valor Hora Ord:</span> <span id="calc-hord" class="font-mono font-bold"></span></div>
                                         <div class="flex justify-between"><span>Valor Hora Extra:</span> <span id="calc-hext" class="font-mono font-bold text-green-700"></span></div>
-                                        <p class="text-[10px] text-slate-400 leading-tight mt-2 text-justify">Cálculo en vivo: Salario Base / 30 días / 8 horas. Esta configuración es permanente. Para variables de la catorcena, use la pestaña "Planillas".</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- SECCIÓN DE TALENTO Y DESARROLLO -->
+                            <div class="border-t border-slate-200 pt-6 mt-6">
+                                <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-medal text-orange-500 mr-2"></i> Perfil Profesional, Certificaciones y Méritos</h3>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div class="bg-orange-50/50 border border-orange-200 rounded p-4">
+                                        <label class="block text-xs font-bold text-orange-800 mb-2 uppercase">Certificaciones Adquiridas:</label>
+                                        <div class="flex flex-col gap-2 max-h-48 overflow-y-auto pr-2">
+                                            ${catCompetencias.map(c => `
+                                                <label class="inline-flex items-center bg-white border border-slate-200 rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-orange-50 shadow-sm">
+                                                    <input type="checkbox" name="emp_certificaciones" value="${c}" class="mr-2 rounded text-orange-600 focus:ring-orange-500 w-4 h-4" ${(emp.competencias||[]).includes(c) ? 'checked' : ''}>
+                                                    ${c}
+                                                </label>
+                                            `).join('')}
+                                            ${catCompetencias.length === 0 ? '<span class="text-xs text-slate-400">No hay competencias creadas en el catálogo de Estructura.</span>' : ''}
+                                        </div>
+                                    </div>
+                                    <div class="bg-slate-50 border border-slate-200 rounded p-4 flex flex-col">
+                                        <label class="block text-xs font-bold text-slate-700 mb-2 uppercase">Historial de Capacitaciones, Honores y Notas:</label>
+                                        <textarea id="e-meritos" class="w-full flex-grow border border-slate-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 resize-none h-40" placeholder="Ej. Empleado del mes en Agosto 2025. Completó curso de primeros auxilios interno.">${emp.meritos || ''}</textarea>
                                     </div>
                                 </div>
                             </div>
@@ -831,7 +898,7 @@
                                 ${dpi ? `<button type="button" onclick="UI.deleteEmployee('${emp.dpi}')" class="text-red-600 hover:text-red-800 text-sm font-bold"><i class="fa-solid fa-trash-can mr-1"></i> Eliminar Empleado</button>` : '<div></div>'}
                                 <div>
                                     <button type="button" onclick="UI.showAdminTab('empleados')" class="mr-4 text-sm text-slate-500 font-medium">Cancelar</button>
-                                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded text-sm font-bold shadow-md"><i class="fa-solid fa-floppy-disk mr-2"></i> Guardar Perfil</button>
+                                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded text-sm font-bold shadow-md"><i class="fa-solid fa-floppy-disk mr-2"></i> Guardar Perfil Completo</button>
                                 </div>
                             </div>
                         </form>
@@ -848,6 +915,10 @@
                     e.preventDefault();
                     const currentEmp = (await DB.get('employees', document.getElementById('e-dpi').value.trim())) || {};
                     
+                    // Extraer checkboxes de competencias
+                    const certs = [];
+                    document.querySelectorAll('input[name="emp_certificaciones"]:checked').forEach(cb => certs.push(cb.value));
+
                     const newEmpData = {
                         ...currentEmp,
                         dpi: document.getElementById('e-dpi').value.trim(),
@@ -862,7 +933,9 @@
                         cuadrilla: document.getElementById('e-cuadrilla').value,
                         cuadrillaAntigua: document.getElementById('e-old').value,
                         salarioBase: Number(document.getElementById('e-salario').value),
-                        turnosVacacionesDisponibles: Number(document.getElementById('e-vac').value)
+                        turnosVacacionesDisponibles: Number(document.getElementById('e-vac').value),
+                        competencias: certs,
+                        meritos: document.getElementById('e-meritos').value.trim()
                     };
                     await DB.put('employees', newEmpData);
                     UI.showAdminTab('empleados');
@@ -891,10 +964,7 @@
                 if (!supName) {
                     maqSelect.innerHTML = '<option value="">-- Seleccione Jefatura Primero --</option>';
                     maqSelect.disabled = true;
-                    if(pueSelect) {
-                        pueSelect.innerHTML = '<option value="">-- Seleccione Área Primero --</option>';
-                        pueSelect.disabled = true;
-                    }
+                    if(pueSelect) { pueSelect.innerHTML = '<option value="">-- Seleccione Área Primero --</option>'; pueSelect.disabled = true; }
                     return;
                 }
                 
@@ -925,9 +995,9 @@
                 const maquina = App.settings.maquinas.find(m => m.nombre === maqName);
                 const puestos = maquina && maquina.puestos ? maquina.puestos : [];
 
-                let html = '<option value="">-- Seleccionar Puesto --</option>';
+                let html = '<option value="">-- Seleccionar Plaza --</option>';
                 puestos.forEach(p => {
-                    html += `<option value="${p}" ${selectedPuesto === p ? 'selected' : ''}>${p}</option>`;
+                    html += `<option value="${p.nombre}" ${selectedPuesto === p.nombre ? 'selected' : ''}>${p.nombre}</option>`;
                 });
                 html += `<option value="Comodín (Volante)" ${selectedPuesto === 'Comodín (Volante)' ? 'selected' : ''}>Comodín (Volante)</option>`;
                 
@@ -938,19 +1008,17 @@
             // --- TAB: PLANILLAS (CATORCENAL Y REPORTE DE SUPERVISOR) ---
             async renderAdminPlanillas(isSupervisorMode = false) {
                 let employees = await DB.getAll('employees');
-                
                 if (isSupervisorMode) {
                     const supInfo = App.currentUser.supervisorInfo;
                     employees = employees.filter(e => e.supervisor === supInfo.nombre && (supInfo.cuadrillas||[]).includes(e.cuadrilla));
                 }
-
                 const contentArea = document.getElementById(isSupervisorMode ? 'supervisor-content-area' : 'admin-content-area');
                 
                 let html = `
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 no-print">
                         <div>
                             <h2 class="text-xl font-bold text-slate-800">Carga de Planilla Catorcenal</h2>
-                            <p class="text-xs text-slate-500">Registre horas variables, deducciones y bonos de esta catorcena. ${isSupervisorMode ? 'Estás viendo solo a tu equipo asignado.' : 'Luego realice el Cierre.'}</p>
+                            <p class="text-xs text-slate-500">Revise los reportes diarios de los empleados, ajuste variables y cierre la catorcena.</p>
                         </div>
                         <div class="flex gap-2 w-full md:w-auto">
                             ${isSupervisorMode ? `
@@ -964,10 +1032,10 @@
                     
                     <!-- ENCABEZADO EXCLUSIVO PARA CUANDO SE IMPRIME EL REPORTE -->
                     <div class="hidden print:block text-center mb-8 border-b-2 border-black pb-4">
-                        <h1 class="text-2xl font-black uppercase tracking-wider">Reporte de Turno y Horas Físicas</h1>
+                        <h1 class="text-2xl font-black uppercase tracking-wider">Reporte de Turno y Asistencia</h1>
                         <p class="text-lg uppercase">Corrugadora Guatemala, S.A.</p>
                         <div class="flex justify-between mt-4 text-sm font-bold">
-                            <span>Supervisor a Cargo: ${isSupervisorMode ? App.currentUser.supervisorInfo.nombre : 'Administración General'}</span>
+                            <span>Jefatura a Cargo: ${isSupervisorMode ? App.currentUser.supervisorInfo.nombre : 'Administración General'}</span>
                             <span>Fecha de Cierre: ${new Date().toLocaleDateString()}</span>
                         </div>
                     </div>
@@ -980,29 +1048,28 @@
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black">Turno</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black">Hrs Ord</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black">Hrs Ext</th>
-                                    <th class="px-4 py-3 text-right font-semibold text-slate-600 border-b border-black">Cafetería</th>
-                                    <th class="px-4 py-3 text-right font-semibold text-slate-600 border-b border-black">Neto Estimado</th>
+                                    <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black">Reportes Día</th>
+                                    <th class="px-4 py-3 text-right font-semibold text-slate-600 border-b border-black no-print">Neto Estimado</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600 no-print border-b border-black">Acción</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-slate-200">
                 `;
 
-                if (employees.length === 0) html += `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No hay empleados para procesar en tu cuadrilla/máquina.</td></tr>`;
+                if (employees.length === 0) html += `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No hay empleados para procesar.</td></tr>`;
                 else {
                     employees.sort((a,b) => (a.cuadrilla||'').localeCompare(b.cuadrilla||'')).forEach(emp => {
                         const b = App.calcularBoletaCatorcenal(emp);
-                        let hrClassOrd = 'text-slate-600';
-                        let hrClassExt = 'text-slate-600';
-                        
-                        // Resaltar en rojo si no cuadra con el estándar base de su turno
+                        let hrClassOrd = 'text-slate-600'; let hrClassExt = 'text-slate-600';
                         if (emp.cuadrilla === 'Fijo Noche' && (b.hrsOrd !== 42)) hrClassOrd = 'text-red-600 font-bold';
                         else if (emp.cuadrilla === 'Oficina' && (b.hrsOrd !== 88)) hrClassOrd = 'text-red-600 font-bold';
                         else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina' && b.hrsOrd !== 56) hrClassOrd = 'text-red-600 font-bold';
-
                         if (emp.cuadrilla === 'Fijo Noche' && (b.hrsExt !== 42)) hrClassExt = 'text-red-600 font-bold';
                         else if (emp.cuadrilla === 'Oficina' && (b.hrsExt !== 0)) hrClassExt = 'text-red-600 font-bold';
                         else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina' && b.hrsExt !== 28) hrClassExt = 'text-red-600 font-bold';
+
+                        const reportesCnt = (emp.reportesActuales || []).length;
+                        const reporteBadge = reportesCnt > 0 ? `<span class="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-1 rounded-full">${reportesCnt} Reportes</span>` : `<span class="text-slate-300 text-[10px]">-</span>`;
 
                         html += `
                             <tr class="hover:bg-slate-50 print:border-b print:border-slate-300">
@@ -1010,8 +1077,8 @@
                                 <td class="px-4 py-3 text-center"><span class="bg-slate-100 px-2 py-1 rounded text-xs border border-slate-200 font-bold">${emp.cuadrilla}</span></td>
                                 <td class="px-4 py-3 text-center font-mono ${hrClassOrd}">${b.hrsOrd}</td>
                                 <td class="px-4 py-3 text-center font-mono ${hrClassExt}">${b.hrsExt}</td>
-                                <td class="px-4 py-3 text-right text-red-600 font-medium">${App.formatMoney(b.cafeteria)}</td>
-                                <td class="px-4 py-3 text-right text-green-700 font-bold bg-green-50/30 print:bg-transparent">${App.formatMoney(b.neto)}</td>
+                                <td class="px-4 py-3 text-center">${reporteBadge}</td>
+                                <td class="px-4 py-3 text-right text-green-700 font-bold bg-green-50/30 print:hidden">${App.formatMoney(b.neto)}</td>
                                 <td class="px-4 py-3 text-center no-print">
                                     <button onclick="UI.renderPlanillaModal('${emp.dpi}', ${isSupervisorMode})" class="bg-slate-100 hover:bg-blue-100 text-blue-700 border border-slate-300 px-3 py-1 rounded text-xs font-bold transition-colors"><i class="fa-solid fa-stopwatch mr-1"></i> Digitar</button>
                                 </td>
@@ -1020,8 +1087,6 @@
                     });
                 }
                 html += `</tbody></table></div>
-                
-                    <!-- PIE DE FIRMA SOLO PARA EL REPORTE IMPRESO -->
                     <div class="hidden print:flex justify-between items-end mt-20 pt-8 w-full max-w-2xl mx-auto text-sm font-bold text-center">
                         <div class="w-48 border-t border-black pt-2">Firma Supervisor</div>
                         <div class="w-48 border-t border-black pt-2">Visto Bueno RRHH</div>
@@ -1040,33 +1105,63 @@
 
                 const currentOrd = emp.hrsOrd !== undefined ? emp.hrsOrd : defaultOrd;
                 const currentExt = emp.hrsExt !== undefined ? emp.hrsExt : defaultExt;
+                const reportes = emp.reportesActuales || [];
 
                 area.innerHTML = `
-                    <div class="max-w-3xl mx-auto bg-white border border-slate-200 rounded-lg p-6 fade-in shadow-sm no-print">
+                    <div class="max-w-4xl mx-auto bg-white border border-slate-200 rounded-lg p-6 fade-in shadow-sm no-print">
                         <div class="flex justify-between items-center mb-6 border-b pb-3">
                             <div>
-                                <h2 class="text-xl font-bold text-slate-800"><i class="fa-solid fa-file-pen text-blue-600 mr-2"></i> Variables de Catorcena</h2>
+                                <h2 class="text-xl font-bold text-slate-800"><i class="fa-solid fa-file-pen text-blue-600 mr-2"></i> Variables y Asistencia</h2>
                                 <p class="text-sm text-slate-500">${emp.nombre} - ${emp.cuadrilla}</p>
                             </div>
                             <button onclick="UI.renderAdminPlanillas(${isSupervisorMode})" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-xl"></i></button>
                         </div>
 
+                        <!-- Sección de Reportes del Empleado -->
+                        <div class="mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                            <h3 class="text-sm font-bold text-slate-700 border-b border-slate-200 pb-1 mb-3"><i class="fa-solid fa-clipboard-user text-green-600 mr-1"></i> Reportes Diarios Ingresados por el Empleado</h3>
+                            ${reportes.length === 0 
+                                ? `<p class="text-xs text-slate-500 italic">El empleado no ha reportado horas manuales en esta catorcena.</p>`
+                                : `
+                                <div class="overflow-x-auto">
+                                    <table class="min-w-full divide-y divide-slate-200 text-xs">
+                                        <thead>
+                                            <tr class="text-slate-500">
+                                                <th class="px-2 py-1 text-left">Fecha</th>
+                                                <th class="px-2 py-1 text-center">Entrada</th>
+                                                <th class="px-2 py-1 text-center">Salida</th>
+                                                <th class="px-2 py-1 text-center">Total Hrs</th>
+                                                <th class="px-2 py-1 text-left">Nota del Empleado</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-100">
+                                            ${reportes.map(r => `
+                                                <tr>
+                                                    <td class="px-2 py-1 font-semibold">${r.fecha}</td>
+                                                    <td class="px-2 py-1 text-center text-blue-600">${r.entrada}</td>
+                                                    <td class="px-2 py-1 text-center text-red-600">${r.salida}</td>
+                                                    <td class="px-2 py-1 text-center font-mono font-bold">${r.totalHrs.toFixed(2)}</td>
+                                                    <td class="px-2 py-1 text-slate-600 italic">${r.nota || '-'}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            `}
+                        </div>
+
                         <form id="plan-form" class="space-y-6">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div class="bg-blue-50 p-4 rounded-lg border border-blue-200 space-y-4">
-                                    <h3 class="text-sm font-bold text-blue-900 border-b border-blue-200 pb-1">Control de Horas Físicas</h3>
-                                    
+                                    <h3 class="text-sm font-bold text-blue-900 border-b border-blue-200 pb-1">Control de Horas a Pagar</h3>
                                     <div class="flex flex-wrap gap-2 mb-2">
                                         <button type="button" onclick="document.getElementById('p-hord').value=56; document.getElementById('p-hext').value=28;" class="flex-1 bg-orange-100 border border-orange-300 text-orange-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-orange-200 min-w-[80px]"><i class="fa-solid fa-sun mr-1"></i> Día (56/28)</button>
                                         <button type="button" onclick="document.getElementById('p-hord').value=42; document.getElementById('p-hext').value=42;" class="flex-1 bg-indigo-100 border border-indigo-300 text-indigo-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-indigo-200 min-w-[80px]"><i class="fa-solid fa-moon mr-1"></i> Noche (42/42)</button>
                                         <button type="button" onclick="document.getElementById('p-hord').value=88; document.getElementById('p-hext').value=0;" class="flex-1 bg-sky-100 border border-sky-300 text-sky-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-sky-200 min-w-[80px]"><i class="fa-solid fa-briefcase mr-1"></i> Oficina (88/0)</button>
                                     </div>
-
-                                    <div><label class="block text-xs font-semibold text-blue-800 mb-1">Horas Ordinarias</label><input type="number" id="p-hord" value="${currentOrd}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white font-mono font-bold"></div>
-                                    <div><label class="block text-xs font-semibold text-blue-800 mb-1">Horas Extras</label><input type="number" id="p-hext" value="${currentExt}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white font-mono font-bold"></div>
-                                    <p class="text-[10px] text-blue-700 leading-tight">Las horas de Oficina por ley son 44h a la semana (88 Catorcena).</p>
+                                    <div><label class="block text-xs font-semibold text-blue-800 mb-1">Horas Ordinarias Finales</label><input type="number" id="p-hord" value="${currentOrd}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white font-mono font-bold"></div>
+                                    <div><label class="block text-xs font-semibold text-blue-800 mb-1">Horas Extras Finales</label><input type="number" id="p-hext" value="${currentExt}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white font-mono font-bold"></div>
                                 </div>
-
                                 <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-4">
                                     <h3 class="text-sm font-bold text-slate-700 border-b border-slate-200 pb-1">Bonos y Deducciones (Q)</h3>
                                     <div class="grid grid-cols-2 gap-3">
@@ -1080,8 +1175,7 @@
                                     <div><label class="block text-xs font-semibold text-red-600 mb-1">Retención ISR</label><input type="number" step="0.01" id="p-isr" value="${emp.isr||0}" class="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white" ${isSupervisorMode ? 'readonly' : ''}></div>
                                 </div>
                             </div>
-                            
-                            <div class="flex justify-end pt-4 border-t border-slate-200">
+                            <div class="flex justify-end pt-4 border-t border-slate-200 mt-6">
                                 <button type="button" onclick="UI.renderAdminPlanillas(${isSupervisorMode})" class="mr-4 text-sm text-slate-500 font-medium">Cancelar</button>
                                 <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded text-sm font-bold shadow"><i class="fa-solid fa-check mr-2"></i> Guardar Variables</button>
                             </div>
@@ -1095,12 +1189,10 @@
                     emp.hrsExt = Number(document.getElementById('p-hext').value);
                     emp.adicionales = Number(document.getElementById('p-adc').value);
                     emp.feriados = Number(document.getElementById('p-fer').value);
-                    
                     if(!isSupervisorMode) { 
                         emp.deduccionCafeteria = Number(document.getElementById('p-cafe').value);
                         emp.isr = Number(document.getElementById('p-isr').value);
                     }
-                    
                     await DB.put('employees', emp);
                     UI.renderAdminPlanillas(isSupervisorMode);
                 });
@@ -1115,26 +1207,26 @@
                 }
             },
 
-            // --- TAB: PROCESOS (MAPA DE MÁQUINAS Y VACANTES) ---
+            // --- TAB: PROCESOS (MAPA DE MÁQUINAS Y SKILLS) ---
             async renderAdminProcesos() {
                 const contentArea = document.getElementById('admin-content-area');
                 const supervisores = App.settings.supervisores || [];
 
                 let html = `
                     <div class="mb-6 border-b border-slate-200 pb-4">
-                        <h2 class="text-xl font-bold text-slate-800">Mapa Operativo de Planta</h2>
-                        <p class="text-xs text-slate-500 mt-1 mb-4">Seleccione un Supervisor y un Área para evaluar la matriz de cobertura del personal.</p>
+                        <h2 class="text-xl font-bold text-slate-800">Control Operativo y Matriz de Talento</h2>
+                        <p class="text-xs text-slate-500 mt-1 mb-4">Seleccione la jefatura y el área para auditar vacantes y competencias del personal asignado.</p>
                         
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl bg-slate-50 p-4 rounded-lg border border-slate-200">
                             <div>
-                                <label class="block text-xs font-bold text-slate-700 mb-1">Supervisor / Jefatura</label>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Jefatura a Cargo</label>
                                 <select id="proc-sup" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onSupervisorProcesosChange()">
                                     <option value="">-- Seleccionar Jefatura --</option>
                                     ${supervisores.map(s => `<option value="${s.nombre}">${s.nombre}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-xs font-bold text-slate-700 mb-1">Máquina / Área</label>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Área / Máquina Evaluada</label>
                                 <select id="proc-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.filterProcesosMatrix()" disabled>
                                     <option value="">-- Seleccione Jefatura Primero --</option>
                                 </select>
@@ -1144,7 +1236,7 @@
                     <div id="procesos-matrix-area">
                         <div class="text-center py-12 text-slate-400 bg-slate-50 rounded-lg border border-slate-200 border-dashed">
                             <i class="fa-solid fa-sitemap text-4xl mb-3 text-slate-300"></i><br>
-                            Seleccione Jefatura y Área para cargar la matriz de vacantes.
+                            Seleccione Jefatura y Área para cargar las matrices.
                         </div>
                     </div>
                 `;
@@ -1154,25 +1246,11 @@
             onSupervisorProcesosChange() {
                 const supName = document.getElementById('proc-sup').value;
                 const maqSelect = document.getElementById('proc-maq');
-                
-                if (!supName) {
-                    maqSelect.innerHTML = '<option value="">-- Seleccione Jefatura Primero --</option>';
-                    maqSelect.disabled = true;
-                    this.filterProcesosMatrix();
-                    return;
-                }
-                
+                if (!supName) { maqSelect.innerHTML = '<option value="">-- Seleccione Jefatura Primero --</option>'; maqSelect.disabled = true; this.filterProcesosMatrix(); return; }
                 const supervisor = App.settings.supervisores.find(s => s.nombre === supName);
                 const maquinas = supervisor && supervisor.maquinas ? supervisor.maquinas : [];
-                
-                if (maquinas.length === 0) {
-                    maqSelect.innerHTML = '<option value="">-- Jefatura sin áreas asignadas --</option>';
-                    maqSelect.disabled = true;
-                } else {
-                    maqSelect.innerHTML = '<option value="">-- Seleccionar Área --</option>' + 
-                        maquinas.map(m => `<option value="${m}">${m}</option>`).join('');
-                    maqSelect.disabled = false;
-                }
+                if (maquinas.length === 0) { maqSelect.innerHTML = '<option value="">-- Jefatura sin áreas asignadas --</option>'; maqSelect.disabled = true; } 
+                else { maqSelect.innerHTML = '<option value="">-- Seleccionar Área --</option>' + maquinas.map(m => `<option value="${m}">${m}</option>`).join(''); maqSelect.disabled = false; }
                 this.filterProcesosMatrix();
             },
 
@@ -1181,60 +1259,107 @@
                 const maq = document.getElementById('proc-maq').value;
                 const area = document.getElementById('procesos-matrix-area');
 
-                if (!sup || !maq) {
-                    area.innerHTML = `<div class="text-center py-12 text-slate-400 bg-slate-50 rounded-lg border border-slate-200 border-dashed">Seleccione ambos campos para cargar la matriz.</div>`;
-                    return;
-                }
+                if (!sup || !maq) { area.innerHTML = `<div class="text-center py-12 text-slate-400 bg-slate-50 rounded-lg border border-slate-200 border-dashed">Seleccione ambos campos para cargar la matriz.</div>`; return; }
 
                 const employees = await DB.getAll('employees');
                 const team = employees.filter(e => e.supervisor === sup && e.maquina === maq);
-                
                 const supervisor = App.settings.supervisores.find(s => s.nombre === sup);
                 const cuadrillas = supervisor.cuadrillas || [];
-                
                 const maquinaData = App.settings.maquinas.find(m => m.nombre === maq);
                 const puestosOficiales = maquinaData && maquinaData.puestos ? maquinaData.puestos : [];
+                const reqCompetencias = maquinaData && maquinaData.competenciasRequeridas ? maquinaData.competenciasRequeridas : [];
                 
-                let matrixHtml = `
-                    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm mb-8">
-                        <div class="bg-blue-900 text-white p-3 font-bold text-sm flex justify-between items-center">
-                            <span><i class="fa-solid fa-layer-group mr-2 text-blue-300"></i> ${maq}</span>
-                            <span class="text-xs bg-blue-800 px-2 py-1 rounded">Jefatura: ${sup}</span>
-                        </div>
-                        <div class="overflow-x-auto">
-                            <table class="min-w-full divide-y divide-slate-200 text-sm">
-                                <thead class="bg-slate-100">
-                                    <tr>
-                                        <th class="px-4 py-3 text-left font-bold text-slate-700 border-r border-slate-200">Posición Requerida</th>
-                                        ${cuadrillas.map(c => `<th class="px-4 py-3 text-center font-bold text-slate-700 border-r border-slate-200">${c}</th>`).join('')}
-                                    </tr>
-                                </thead>
-                                <tbody class="bg-white divide-y divide-slate-100">
+                // --- 1. MATRIZ DE COBERTURA Y VACANTES ---
+                let html = `
+                    <div class="mb-8">
+                        <h3 class="text-lg font-bold text-slate-800 mb-3"><i class="fa-solid fa-users-viewfinder text-blue-600 mr-1"></i> Matriz de Cobertura (Requerimientos Físicos)</h3>
+                        <div class="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
+                            <div class="bg-blue-900 text-white p-3 font-bold text-sm flex justify-between items-center">
+                                <span><i class="fa-solid fa-layer-group mr-2 text-blue-300"></i> ${maq}</span>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                                    <thead class="bg-slate-100">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left font-bold text-slate-700 border-r border-slate-200">Plaza Requerida (Cant)</th>
+                                            ${cuadrillas.map(c => `<th class="px-4 py-3 text-center font-bold text-slate-700 border-r border-slate-200 min-w-[150px]">${c}</th>`).join('')}
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-slate-100">
                 `;
 
-                let totalOcupados = 0;
-                const totalRequeridos = puestosOficiales.length * cuadrillas.length;
-
-                puestosOficiales.forEach(puesto => {
-                    matrixHtml += `<tr><td class="px-4 py-3 font-semibold text-slate-800 bg-slate-50 border-r border-slate-200">${puesto}</td>`;
+                puestosOficiales.forEach(pObj => {
+                    const pname = pObj.nombre; const pcant = pObj.cantidad;
+                    html += `<tr><td class="px-4 py-3 font-semibold text-slate-800 bg-slate-50 border-r border-slate-200">${pname} <span class="text-[10px] bg-slate-200 px-1 rounded ml-1 font-mono">Req: ${pcant}</span></td>`;
+                    
                     cuadrillas.forEach(cuad => {
-                        const worker = team.find(e => e.cuadrilla === cuad && e.puesto === puesto);
-                        if (worker) {
-                            totalOcupados++;
-                            matrixHtml += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-green-50 border border-green-200 text-green-800 font-bold px-2 py-1 rounded text-xs truncate max-w-[150px] mx-auto" title="${worker.nombre}">${worker.nombre.split(' ')[0]} ${worker.nombre.split(' ')[1]||''}</div></td>`;
+                        const workers = team.filter(e => e.cuadrilla === cuad && e.puesto === pname);
+                        if (workers.length >= pcant) {
+                            html += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-green-50 border border-green-300 text-green-800 font-bold px-2 py-1 rounded text-xs shadow-sm">${workers.map(w => w.nombre.split(' ')[0]).join('<br>')}</div></td>`;
+                        } else if (workers.length > 0) {
+                            html += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-amber-50 border border-amber-400 text-amber-800 font-bold px-2 py-1 rounded text-xs shadow-sm">${workers.map(w => w.nombre.split(' ')[0]).join('<br>')}<div class="text-[9px] text-red-600 mt-1 pt-1 border-t border-amber-200 font-bold">FALTA ${pcant - workers.length}</div></div></td>`;
                         } else {
-                            matrixHtml += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-red-50 border border-red-300 text-red-600 font-bold px-2 py-1 rounded text-[10px] shadow-inner">VACANTE</div></td>`;
+                            html += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-red-50 border border-red-300 text-red-600 font-bold px-2 py-1 rounded text-[10px] shadow-inner">VACANTE (Faltan ${pcant})</div></td>`;
                         }
                     });
-                    matrixHtml += `</tr>`;
+                    html += `</tr>`;
                 });
 
-                if (puestosOficiales.length === 0) {
-                    matrixHtml += `<tr><td colspan="${cuadrillas.length + 1}" class="px-4 py-6 text-center text-slate-500">No se han configurado puestos requeridos para esta Área. Diríjase a Estructura para agregarlos.</td></tr>`;
+                if (puestosOficiales.length === 0) html += `<tr><td colspan="${cuadrillas.length + 1}" class="px-4 py-6 text-center text-slate-500">Configura los puestos requeridos en la pestaña Estructura.</td></tr>`;
+                html += `</tbody></table></div></div></div>`;
+
+                // --- 2. MATRIZ DE COMPETENCIAS (SKILLS MATRIX) ---
+                html += `
+                    <div class="mb-4 mt-8">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1"><i class="fa-solid fa-graduation-cap text-orange-500 mr-1"></i> Matriz de Competencias y Talento (Skills Matrix)</h3>
+                        <p class="text-xs text-slate-500 mb-3">Audita qué empleados cumplen con las ${reqCompetencias.length} certificaciones exigidas para operar esta área. (Útil para indexar salarios)</p>
+                    </div>
+                `;
+
+                if (reqCompetencias.length === 0) {
+                    html += `<div class="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded text-sm"><i class="fa-solid fa-circle-info mr-2"></i> Esta área no tiene certificaciones exigidas configuradas.</div>`;
+                } else if (team.length === 0) {
+                    html += `<div class="bg-slate-50 border border-slate-200 text-slate-500 p-4 rounded text-sm text-center">No hay personal asignado a esta área para evaluar.</div>`;
+                } else {
+                    html += `
+                        <div class="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                                    <thead class="bg-orange-50">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left font-bold text-orange-900 border-r border-orange-200">Empleado Evaluado</th>
+                                            ${reqCompetencias.map(c => `<th class="px-4 py-3 text-center font-bold text-orange-900 border-r border-orange-200 text-xs w-32"><div class="truncate w-full" title="${c}">${c}</div></th>`).join('')}
+                                            <th class="px-4 py-3 text-center font-black text-orange-900">Score de Idoneidad</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-slate-100">
+                    `;
+                    team.forEach(w => {
+                        let matches = 0;
+                        const wComps = w.competencias || [];
+                        let rowHtml = `<tr><td class="px-4 py-2 bg-slate-50 border-r border-slate-200"><div class="font-bold text-slate-800">${w.nombre}</div><div class="text-[9px] text-slate-500">${w.puesto} | Turno ${w.cuadrilla}</div></td>`;
+                        
+                        reqCompetencias.forEach(rc => {
+                            if (wComps.includes(rc)) {
+                                matches++;
+                                rowHtml += `<td class="px-4 py-2 text-center border-r border-slate-100 text-green-500 text-lg"><i class="fa-solid fa-circle-check"></i></td>`;
+                            } else {
+                                rowHtml += `<td class="px-4 py-2 text-center border-r border-slate-100 text-red-300 text-lg"><i class="fa-solid fa-circle-xmark"></i></td>`;
+                            }
+                        });
+
+                        const score = Math.round((matches / reqCompetencias.length) * 100);
+                        let scoreColor = 'text-red-600 bg-red-50';
+                        if(score === 100) scoreColor = 'text-green-700 bg-green-50';
+                        else if (score >= 50) scoreColor = 'text-amber-600 bg-amber-50';
+
+                        rowHtml += `<td class="px-4 py-2 text-center font-black text-lg ${scoreColor} border-l-2 border-orange-200">${score}%</td></tr>`;
+                        html += rowHtml;
+                    });
+                    html += `</tbody></table></div></div>`;
                 }
 
-                matrixHtml += `</tbody></table></div></div>`;
-                area.innerHTML = matrixHtml;
+                area.innerHTML = html;
             },
 
             // --- TAB: HISTORIAL ---
@@ -1250,9 +1375,7 @@
                             ${employees.map(e => `<option value="${e.dpi}">${e.nombre} (${e.numEmpleado})</option>`).join('')}
                         </select>
                     </div>
-                    <div id="historial-detalle-container">
-                        <div class="text-center py-12 text-slate-400 bg-slate-50 rounded-lg border border-slate-200 border-dashed">Seleccione un empleado.</div>
-                    </div>
+                    <div id="historial-detalle-container"><div class="text-center py-12 text-slate-400 bg-slate-50 rounded-lg border border-slate-200 border-dashed">Seleccione un empleado.</div></div>
                 `;
                 contentArea.innerHTML = html;
             },
@@ -1260,17 +1383,11 @@
             async renderHistorialDetalle(dpi) {
                 const container = document.getElementById('historial-detalle-container');
                 if (!dpi) { container.innerHTML = `...`; return; }
-
                 const emp = await DB.get('employees', dpi);
                 const historial = emp.historial || [];
+                if (historial.length === 0) { container.innerHTML = `<div class="text-center py-8 text-slate-500">Sin historial registrado.</div>`; return; }
 
-                if (historial.length === 0) {
-                    container.innerHTML = `<div class="text-center py-8 text-slate-500">Sin historial registrado.</div>`;
-                    return;
-                }
-
-                let sumDevengado = 0;
-                historial.forEach(h => sumDevengado += h.totalDevengado);
+                let sumDevengado = 0; historial.forEach(h => sumDevengado += h.totalDevengado);
                 const promedioCatorcenal = sumDevengado / historial.length;
                 const promedioMensual = (promedioCatorcenal / 14) * 30.4166; 
 
@@ -1306,7 +1423,7 @@
             },
 
             // ==========================================
-            // VISTA DE SUPERVISOR
+            // VISTAS DE SUPERVISOR Y EMPLEADO
             // ==========================================
             async renderSupervisorDashboard() {
                 const supInfo = App.currentUser.supervisorInfo;
@@ -1325,24 +1442,19 @@
                                 </div>
                             </div>
                         </div>
-
-                        <div id="supervisor-content-area" class="bg-white rounded-lg shadow-sm border border-slate-200 p-4 sm:p-6 min-h-[400px] print:shadow-none print:border-none print:p-0">
-                            <!-- Aquí se carga la planilla filtrada -->
-                        </div>
+                        <div id="supervisor-content-area" class="bg-white rounded-lg shadow-sm border border-slate-200 p-4 sm:p-6 min-h-[400px] print:shadow-none print:border-none print:p-0"></div>
                     </div>
                 `;
                 this.renderAdminPlanillas(true);
             },
 
-            // ==========================================
-            // VISTA DEL EMPLEADO
-            // ==========================================
             renderEmployeeDashboard() {
                 const container = document.getElementById('app-container');
                 container.innerHTML = `
                     <div class="fade-in space-y-6">
                         <div class="flex flex-wrap justify-center mb-6 gap-2 no-print">
-                            <button id="btn-view-boleta" onclick="UI.toggleEmployeeView('boleta')" class="px-6 py-2 text-sm font-bold rounded-md bg-blue-800 text-white shadow transition-all"><i class="fa-solid fa-file-invoice-dollar mr-1"></i> Mis Boletas</button>
+                            <button id="btn-view-reportes" onclick="UI.toggleEmployeeView('reportes')" class="px-6 py-2 text-sm font-bold rounded-md bg-blue-800 text-white shadow transition-all"><i class="fa-solid fa-user-clock mr-1"></i> Reportar Asistencia</button>
+                            <button id="btn-view-boleta" onclick="UI.toggleEmployeeView('boleta')" class="px-6 py-2 text-sm font-bold rounded-md bg-slate-200 text-slate-700 transition-all hover:bg-slate-300"><i class="fa-solid fa-file-invoice-dollar mr-1"></i> Mis Boletas</button>
                             <button id="btn-view-new" onclick="UI.toggleEmployeeView('new')" class="px-6 py-2 text-sm font-bold rounded-md bg-slate-200 text-slate-700 transition-all hover:bg-slate-300"><i class="fa-solid fa-calendar-check mr-1"></i> Mi Horario</button>
                         </div>
                         <div id="employee-content-area"></div>
@@ -1354,7 +1466,7 @@
             toggleEmployeeView(mode) {
                 App.calendarViewMode = mode;
                 const area = document.getElementById('employee-content-area');
-                ['boleta', 'new'].forEach(id => {
+                ['reportes', 'boleta', 'new'].forEach(id => {
                     const btn = document.getElementById(`btn-view-${id}`);
                     if(btn) {
                         if(id === mode) { btn.classList.remove('bg-slate-200', 'text-slate-700'); btn.classList.add('bg-blue-800', 'text-white', 'shadow'); }
@@ -1379,7 +1491,7 @@
                         <div id="boleta-render-area"></div>
                     `;
                     this.renderBoletaEspecifica('actual');
-                } else {
+                } else if (mode === 'new') {
                     area.innerHTML = `
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden fade-in">
                             <div id="legend-new" class="flex flex-wrap gap-2 text-[10px] font-bold uppercase p-3 bg-slate-50 border-b border-slate-100 justify-center">
@@ -1393,6 +1505,71 @@
                         </div>
                     `;
                     this.renderCalendarGrid();
+                } else if (mode === 'reportes') {
+                    this.renderReportesArea();
+                }
+            },
+
+            renderReportesArea() {
+                const emp = App.currentUser;
+                const area = document.getElementById('employee-content-area');
+                const reportes = emp.reportesActuales || [];
+                const today = new Date().toISOString().split('T')[0];
+
+                let html = `
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 fade-in">
+                        <div class="bg-white p-5 rounded-lg shadow-sm border border-slate-200 md:col-span-1 h-fit">
+                            <h3 class="font-bold text-slate-800 border-b border-slate-200 pb-2 mb-4"><i class="fa-solid fa-clock mr-2 text-blue-600"></i> Reportar Nuevo Turno</h3>
+                            <form id="form-reporte-dia" class="space-y-4">
+                                <div><label class="block text-xs font-semibold mb-1 text-slate-600">Fecha del Turno</label><input type="date" id="rep-fecha" value="${today}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 bg-slate-50"></div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div><label class="block text-xs font-semibold mb-1 text-blue-700">Hora Entrada</label><input type="time" id="rep-ent" required class="w-full border border-blue-300 rounded px-2 py-2 text-sm focus:ring-1 focus:ring-blue-500"></div>
+                                    <div><label class="block text-xs font-semibold mb-1 text-red-700">Hora Salida</label><input type="time" id="rep-sal" required class="w-full border border-red-300 rounded px-2 py-2 text-sm focus:ring-1 focus:ring-red-500"></div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold mb-1 text-slate-600">Nota u Observación</label>
+                                    <input type="text" id="rep-nota" placeholder="Opcional..." class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500">
+                                </div>
+                                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded text-sm shadow-sm transition-colors"><i class="fa-solid fa-paper-plane mr-1"></i> Enviar a Jefatura</button>
+                            </form>
+                        </div>
+                        <div class="bg-white p-5 rounded-lg shadow-sm border border-slate-200 md:col-span-2">
+                            <h3 class="font-bold text-slate-800 border-b border-slate-200 pb-2 mb-4"><i class="fa-solid fa-list-check mr-2 text-blue-600"></i> Mis Reportes (Catorcena Actual)</h3>
+                `;
+                if(reportes.length === 0) { html += `<div class="text-center py-10 text-slate-400 bg-slate-50 rounded border border-dashed border-slate-200">Aún no has reportado horas.</div>`; } 
+                else {
+                    html += `
+                        <div class="overflow-x-auto rounded border border-slate-200">
+                            <table class="min-w-full divide-y divide-slate-200 text-sm">
+                                <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left font-semibold text-slate-600">Fecha</th><th class="px-3 py-2 text-center font-semibold text-slate-600">Entrada</th><th class="px-3 py-2 text-center font-semibold text-slate-600">Salida</th><th class="px-3 py-2 text-center font-bold text-blue-800">Total Hrs</th><th class="px-3 py-2 text-left font-semibold text-slate-600 w-1/3">Nota</th><th class="px-3 py-2 text-center font-semibold text-slate-600"><i class="fa-solid fa-trash"></i></th></tr></thead>
+                                <tbody class="bg-white divide-y divide-slate-100">
+                    `;
+                    reportes.forEach((r, idx) => {
+                        html += `<tr class="hover:bg-slate-50"><td class="px-3 py-2 font-medium">${r.fecha}</td><td class="px-3 py-2 text-center text-blue-600">${r.entrada}</td><td class="px-3 py-2 text-center text-red-600">${r.salida}</td><td class="px-3 py-2 text-center font-mono font-bold bg-blue-50/50">${r.totalHrs.toFixed(2)}</td><td class="px-3 py-2 text-xs italic text-slate-500 truncate max-w-[150px]" title="${r.nota}">${r.nota || '-'}</td><td class="px-3 py-2 text-center"><button onclick="UI.eliminarReporteEmpleado(${idx})" class="text-red-400 hover:text-red-600"><i class="fa-solid fa-circle-xmark"></i></button></td></tr>`;
+                    });
+                    html += `</tbody></table></div>`;
+                }
+                html += `</div></div>`;
+                area.innerHTML = html;
+
+                document.getElementById('form-reporte-dia').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const fecha = document.getElementById('rep-fecha').value; const ent = document.getElementById('rep-ent').value; const sal = document.getElementById('rep-sal').value;
+                    const nota = document.getElementById('rep-nota').value.trim();
+                    const hrs = App.calcularHorasDiferencia(ent, sal);
+                    const emp = App.currentUser;
+                    if(!emp.reportesActuales) emp.reportesActuales = [];
+                    emp.reportesActuales.push({ fecha, entrada: ent, salida: sal, nota, totalHrs: hrs, timestamp: new Date().toISOString() });
+                    emp.reportesActuales.sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+                    await DB.put('employees', emp);
+                    UI.renderReportesArea();
+                });
+            },
+
+            async eliminarReporteEmpleado(idx) {
+                if(confirm("¿Seguro que deseas eliminar este reporte?")) {
+                    const emp = App.currentUser; emp.reportesActuales.splice(idx, 1);
+                    await DB.put('employees', emp); UI.renderReportesArea();
                 }
             },
 
