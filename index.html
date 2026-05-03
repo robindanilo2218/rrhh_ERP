@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TurnoSync - Sistema Integral 2-2-3</title>
+    <title>TurnoSync - Sistema Integral 2-2-3 y Administrativo</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome -->
@@ -64,7 +64,7 @@
     </main>
 
     <footer class="bg-slate-200 text-slate-500 text-center py-4 text-xs mt-auto no-print">
-        &copy; 2026 TurnoSync Industrial - Modelo 2-2-3 Optimizado. Corrugadora Guatemala S.A.
+        &copy; 2026 TurnoSync Industrial - Modelo 2-2-3 y Administrativo. Corrugadora Guatemala S.A.
     </footer>
 
     <script>
@@ -82,7 +82,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v12',
+            dbName: 'TurnoSyncDB_v13',
             version: 1,
             db: null,
             init() {
@@ -118,7 +118,6 @@
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
                     if (settings.telefonoRRHH === undefined) settings.telefonoRRHH = '';
 
-                    // NUEVA ESTRUCTURA: Puestos integrados directamente a la Máquina
                     if (!settings.maquinas) {
                         settings.maquinas = [{ 
                             nombre: 'Maquina 01', 
@@ -128,7 +127,7 @@
                     }
                     
                     if (!settings.supervisores) {
-                        settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Maquina 01'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'] }];
+                        settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Maquina 01'], cuadrillas: ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'] }];
                     }
                     
                     await this.put('settings', settings);
@@ -312,8 +311,13 @@
                 const valorHora = sbm / 30 / 8;
                 const valorExtra = valorHora * 1.5;
 
+                // Set de horas por defecto basado en la Cuadrilla asignada
                 let defaultOrd = 56; let defaultExt = 28;
-                if (emp.cuadrilla === 'Fijo Noche') { defaultOrd = 42; defaultExt = 42; }
+                if (emp.cuadrilla === 'Fijo Noche') { 
+                    defaultOrd = 42; defaultExt = 42; 
+                } else if (emp.cuadrilla === 'Oficina') { 
+                    defaultOrd = 88; defaultExt = 0; // 44h a la semana * 2 semanas
+                }
 
                 const hrsOrd = emp.hrsOrd !== undefined ? Number(emp.hrsOrd) : defaultOrd;
                 const hrsExt = emp.hrsExt !== undefined ? Number(emp.hrsExt) : defaultExt;
@@ -326,6 +330,7 @@
                 const bonoExtraordinario = 144.67; 
                 const feriados = Number(emp.feriados || 0);
 
+                // El Séptimo Día se calcula igual para todos en la catorcena
                 const septimoDia = (devOrd + devExt + bonoIncentivo) / 6;
 
                 const totalDevengado = devOrd + devExt + septimoDia + bonoIncentivo + bonoExtraordinario + adicionales + feriados;
@@ -362,7 +367,9 @@
                     emp.deduccionCafeteria = 0; 
                     emp.isr = 0; 
                     
+                    // Reset de horas basado en su turno
                     if(emp.cuadrilla === 'Fijo Noche') { emp.hrsOrd = 42; emp.hrsExt = 42; }
+                    else if (emp.cuadrilla === 'Oficina') { emp.hrsOrd = 88; emp.hrsExt = 0; }
                     else { emp.hrsOrd = 56; emp.hrsExt = 28; } 
                     
                     await DB.put('employees', emp);
@@ -373,6 +380,16 @@
             
             getNewShiftForDate(dateStr, cuadrilla) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
+                
+                // Lógica especial para Horario de Oficina (Independiente del ancla, se basa en día de la semana)
+                if (cuadrilla === 'Oficina') {
+                    const dayOfWeek = targetDate.getDay(); // 0:Dom, 1:Lun, 2:Mar, 3:Mie, 4:Jue, 5:Vie, 6:Sab
+                    if (dayOfWeek >= 1 && dayOfWeek <= 5) return 'O'; // Oficina Día completo
+                    if (dayOfWeek === 6) return 'MD'; // Sábado Medio Día
+                    return 'L'; // Domingo Libre
+                }
+
+                // Lógica de Rotación y Fijos
                 const diffTime = targetDate.getTime() - this.getAnchorDate().getTime();
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                 
@@ -395,6 +412,15 @@
             
             getOldShiftForDate(dateStr, cuadrillaAntigua) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
+                
+                // Si es administrativo en el antiguo, asume mismo calendario de oficina
+                if (cuadrillaAntigua === 'Oficina') {
+                    const dayOfWeek = targetDate.getDay();
+                    if (dayOfWeek >= 1 && dayOfWeek <= 5) return 'O';
+                    if (dayOfWeek === 6) return 'MD';
+                    return 'L';
+                }
+
                 const diffTime = targetDate.getTime() - this.getAnchorDate().getTime();
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                 
@@ -455,7 +481,7 @@
                 const contentArea = document.getElementById('admin-content-area');
                 const maquinas = App.settings.maquinas || [];
                 const supervisores = App.settings.supervisores || [];
-                const listCuadrillas = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche'];
+                const listCuadrillas = ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'];
 
                 let html = `
                     <div class="mb-6 flex flex-col items-start gap-4">
@@ -497,9 +523,9 @@
                         
                         <!-- Columna Máquinas y Puestos -->
                         <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-microchip text-blue-600 mr-2"></i> Máquinas y Puestos de Trabajo</h3>
+                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-microchip text-blue-600 mr-2"></i> Departamentos y Puestos de Trabajo</h3>
                             <form onsubmit="UI.addMaquina(event)" class="flex gap-2 mb-4">
-                                <input type="text" id="new-maq" placeholder="Nombre de nueva máquina..." class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
+                                <input type="text" id="new-maq" placeholder="Nombre (Ej. Máquina 1, Admon...)" class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
                                 <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"><i class="fa-solid fa-plus"></i></button>
                             </form>
                             <ul class="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
@@ -507,7 +533,7 @@
                                     <li class="flex flex-col bg-white p-3 border border-slate-200 rounded shadow-sm">
                                         <div class="flex justify-between items-center mb-2">
                                             <div class="flex items-center gap-2">
-                                                <button onclick="UI.toggleMaquina(${idx})" class="text-xl ${m.activa ? 'text-green-500' : 'text-slate-300'}" title="${m.activa ? 'Máquina Activa' : 'Máquina Inactiva'}">
+                                                <button onclick="UI.toggleMaquina(${idx})" class="text-xl ${m.activa ? 'text-green-500' : 'text-slate-300'}" title="${m.activa ? 'Activo' : 'Inactivo'}">
                                                     <i class="fa-solid ${m.activa ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
                                                 </button>
                                                 <span class="text-sm font-bold ${m.activa ? 'text-slate-800' : 'text-slate-400 line-through'}">${m.nombre}</span>
@@ -535,7 +561,7 @@
 
                         <!-- Columna Supervisores -->
                         <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Supervisores</h3>
+                            <h3 class="font-bold text-slate-700 border-b border-slate-200 pb-2 mb-3"><i class="fa-solid fa-user-tie text-blue-600 mr-2"></i> Cuentas de Jefaturas / Supervisores</h3>
                             <form onsubmit="UI.addSupervisor(event)" class="flex gap-2 mb-4">
                                 <input type="text" id="new-sup" placeholder="Nombre exacto..." class="w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
                                 <input type="text" id="new-sup-tel" placeholder="WhatsApp..." class="w-1/3 border border-slate-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500" required>
@@ -556,7 +582,7 @@
                                             </div>
                                         </div>
                                         <div class="border-t border-slate-100 pt-2 mb-2">
-                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Máquinas a Cargo:</label>
+                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Áreas a Cargo:</label>
                                             <div class="flex flex-wrap gap-1.5">
                                                 ${maquinas.filter(m => m.activa).map(m => `
                                                     <label class="inline-flex items-center bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:bg-blue-50">
@@ -569,7 +595,7 @@
                                             </div>
                                         </div>
                                         <div class="border-t border-slate-100 pt-2">
-                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Cuadrillas a Cargo:</label>
+                                            <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Turnos a Cargo:</label>
                                             <div class="flex flex-wrap gap-1.5">
                                                 ${listCuadrillas.map(c => `
                                                     <label class="inline-flex items-center bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:bg-amber-100">
@@ -609,7 +635,7 @@
                 } 
             },
             async toggleMaquina(idx) { App.settings.maquinas[idx].activa = !App.settings.maquinas[idx].activa; await DB.put('settings', App.settings); this.renderAdminEstructura(); },
-            async deleteMaquina(idx) { if(confirm("¿Seguro que desea eliminar esta máquina?")) { App.settings.maquinas.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
+            async deleteMaquina(idx) { if(confirm("¿Seguro que desea eliminar esta área/máquina?")) { App.settings.maquinas.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
             
             async addPuestoMaquina(idx) {
                 const input = document.getElementById(`new-pue-${idx}`);
@@ -624,7 +650,7 @@
                 }
             },
             async deletePuestoMaquina(mIdx, pIdx) {
-                if(confirm("¿Eliminar este puesto de la máquina?")) {
+                if(confirm("¿Eliminar este puesto del área?")) {
                     App.settings.maquinas[mIdx].puestos.splice(pIdx, 1);
                     await DB.put('settings', App.settings);
                     this.renderAdminEstructura();
@@ -641,7 +667,7 @@
                     this.renderAdminEstructura(); 
                 } 
             },
-            async deleteSupervisor(idx) { if(confirm("¿Seguro que desea eliminar este supervisor?")) { App.settings.supervisores.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
+            async deleteSupervisor(idx) { if(confirm("¿Seguro que desea eliminar esta jefatura?")) { App.settings.supervisores.splice(idx, 1); await DB.put('settings', App.settings); this.renderAdminEstructura(); } },
             async toggleSupervisorOption(idx, tipo, valor, checked) {
                 if(!App.settings.supervisores[idx][tipo]) App.settings.supervisores[idx][tipo] = [];
                 if(checked) App.settings.supervisores[idx][tipo].push(valor);
@@ -668,8 +694,8 @@
                                 <tr>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Nombre / DPI</th>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Contacto</th>
-                                    <th class="px-4 py-3 text-left font-semibold text-slate-600">Puesto / Máquina</th>
-                                    <th class="px-4 py-3 text-center font-semibold text-slate-600">Cuadrilla</th>
+                                    <th class="px-4 py-3 text-left font-semibold text-slate-600">Puesto / Área</th>
+                                    <th class="px-4 py-3 text-center font-semibold text-slate-600">Turno Asig.</th>
                                     <th class="px-4 py-3 text-right font-semibold text-slate-600">Sueldo Base</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600">Acciones</th>
                                 </tr>
@@ -731,23 +757,23 @@
                                 <div class="space-y-4">
                                     <h3 class="text-sm font-bold border-b border-slate-100 pb-1 text-slate-700">Asignación Operativa</h3>
                                     
-                                    <div><label class="block text-xs font-semibold mb-1">Supervisor a Cargo</label>
+                                    <div><label class="block text-xs font-semibold mb-1">Jefatura a Cargo</label>
                                         <select id="e-sup" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onSupervisorEmployeeChange()">
-                                            <option value="">-- Seleccionar Supervisor --</option>
+                                            <option value="">-- Seleccionar Jefatura --</option>
                                             ${supervisores.map(s => `<option value="${s.nombre}" ${emp.supervisor===s.nombre?'selected':''}>${s.nombre}</option>`).join('')}
                                         </select>
                                     </div>
                                     
-                                    <div><label class="block text-xs font-semibold mb-1">Máquina (A cargo del Supervisor)</label>
+                                    <div><label class="block text-xs font-semibold mb-1">Área / Máquina</label>
                                         <select id="e-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onMaquinaEmployeeChange()" ${!emp.supervisor ? 'disabled' : ''}>
-                                            <option value="">-- Seleccione Supervisor Primero --</option>
+                                            <option value="">-- Seleccione Jefatura Primero --</option>
                                         </select>
                                     </div>
                                     
                                     <div>
-                                        <label class="block text-xs font-semibold mb-1">Puesto Oficial (Específico de Máquina)</label>
+                                        <label class="block text-xs font-semibold mb-1">Puesto Oficial</label>
                                         <select id="e-puesto" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" ${!emp.maquina ? 'disabled' : ''}>
-                                            <option value="">-- Seleccione Máquina Primero --</option>
+                                            <option value="">-- Seleccione Área Primero --</option>
                                         </select>
                                     </div>
 
@@ -760,9 +786,12 @@
                                                 <option value="C" ${emp.cuadrilla==='C'?'selected':''}>Cuadrilla C</option>
                                                 <option value="D" ${emp.cuadrilla==='D'?'selected':''}>Cuadrilla D</option>
                                             </optgroup>
-                                            <optgroup label="2-2-3 Fijos">
+                                            <optgroup label="Turnos Fijos">
                                                 <option value="Fijo Día" ${emp.cuadrilla==='Fijo Día'?'selected':''}>Fijo Día</option>
                                                 <option value="Fijo Noche" ${emp.cuadrilla==='Fijo Noche'?'selected':''}>Fijo Noche</option>
+                                            </optgroup>
+                                            <optgroup label="Administrativos">
+                                                <option value="Oficina" ${emp.cuadrilla==='Oficina'?'selected':''}>Oficina (Lun-Sáb)</option>
                                             </optgroup>
                                             <optgroup label="Otros">
                                                 <option value="VOL" ${emp.cuadrilla==='VOL'?'selected':''}>Comodín (Volante)</option>
@@ -771,15 +800,16 @@
                                     </div>
 
                                     <div>
-                                        <label class="block text-xs font-bold text-slate-500 mb-1">Turno Antiguo (Para Comparativa)</label>
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">Turno Antiguo (Comparativa)</label>
                                         <select id="e-old" class="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50">
                                             <option value="1" ${emp.cuadrillaAntigua==='1'?'selected':''}>Turno 1</option>
                                             <option value="2" ${emp.cuadrillaAntigua==='2'?'selected':''}>Turno 2</option>
                                             <option value="3" ${emp.cuadrillaAntigua==='3'?'selected':''}>Turno 3</option>
+                                            <option value="Oficina" ${emp.cuadrillaAntigua==='Oficina'?'selected':''}>Oficina (Lun-Sáb)</option>
                                         </select>
                                     </div>
                                     
-                                    <div><label class="block text-xs font-semibold mb-1">Vacaciones Disponibles (Turnos)</label><input type="number" id="e-vac" value="${emp.turnosVacacionesDisponibles}" max="10" min="0" class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
+                                    <div><label class="block text-xs font-semibold mb-1">Vacaciones Disponibles (Días/Turnos)</label><input type="number" id="e-vac" value="${emp.turnosVacacionesDisponibles}" min="0" class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
                                 </div>
 
                                 <!-- Columna 3: Salario Base -->
@@ -859,10 +889,10 @@
                 if (!maqSelect) return;
                 
                 if (!supName) {
-                    maqSelect.innerHTML = '<option value="">-- Seleccione Supervisor Primero --</option>';
+                    maqSelect.innerHTML = '<option value="">-- Seleccione Jefatura Primero --</option>';
                     maqSelect.disabled = true;
                     if(pueSelect) {
-                        pueSelect.innerHTML = '<option value="">-- Seleccione Máquina Primero --</option>';
+                        pueSelect.innerHTML = '<option value="">-- Seleccione Área Primero --</option>';
                         pueSelect.disabled = true;
                     }
                     return;
@@ -872,10 +902,10 @@
                 const maquinas = supervisor && supervisor.maquinas ? supervisor.maquinas : [];
                 
                 if (maquinas.length === 0) {
-                    maqSelect.innerHTML = '<option value="">-- Supervisor sin máquinas asignadas --</option>';
+                    maqSelect.innerHTML = '<option value="">-- Jefatura sin áreas asignadas --</option>';
                     maqSelect.disabled = true;
                 } else {
-                    maqSelect.innerHTML = '<option value="">-- Seleccionar Máquina --</option>' + 
+                    maqSelect.innerHTML = '<option value="">-- Seleccionar Área/Máquina --</option>' + 
                         maquinas.map(m => `<option value="${m}" ${selectedMaq === m ? 'selected' : ''}>${m}</option>`).join('');
                     maqSelect.disabled = false;
                 }
@@ -887,7 +917,7 @@
                 if (!pueSelect) return;
 
                 if (!maqName) {
-                    pueSelect.innerHTML = '<option value="">-- Seleccione Máquina Primero --</option>';
+                    pueSelect.innerHTML = '<option value="">-- Seleccione Área Primero --</option>';
                     pueSelect.disabled = true;
                     return;
                 }
@@ -947,8 +977,9 @@
                             <thead class="bg-slate-50 print:bg-slate-100">
                                 <tr>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600 border-b border-black">Empleado / Puesto</th>
-                                    <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black" title="Horas Ordinarias (Base 56 o 42)">Hrs Ord</th>
-                                    <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black" title="Horas Extras (Base 28 o 42)">Hrs Ext</th>
+                                    <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black">Turno</th>
+                                    <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black">Hrs Ord</th>
+                                    <th class="px-4 py-3 text-center font-semibold text-slate-600 border-b border-black">Hrs Ext</th>
                                     <th class="px-4 py-3 text-right font-semibold text-slate-600 border-b border-black">Cafetería</th>
                                     <th class="px-4 py-3 text-right font-semibold text-slate-600 border-b border-black">Neto Estimado</th>
                                     <th class="px-4 py-3 text-center font-semibold text-slate-600 no-print border-b border-black">Acción</th>
@@ -957,15 +988,28 @@
                             <tbody class="bg-white divide-y divide-slate-200">
                 `;
 
-                if (employees.length === 0) html += `<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No hay empleados para procesar en tu cuadrilla/máquina.</td></tr>`;
+                if (employees.length === 0) html += `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No hay empleados para procesar en tu cuadrilla/máquina.</td></tr>`;
                 else {
                     employees.sort((a,b) => (a.cuadrilla||'').localeCompare(b.cuadrilla||'')).forEach(emp => {
                         const b = App.calcularBoletaCatorcenal(emp);
+                        let hrClassOrd = 'text-slate-600';
+                        let hrClassExt = 'text-slate-600';
+                        
+                        // Resaltar en rojo si no cuadra con el estándar base de su turno
+                        if (emp.cuadrilla === 'Fijo Noche' && (b.hrsOrd !== 42)) hrClassOrd = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla === 'Oficina' && (b.hrsOrd !== 88)) hrClassOrd = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina' && b.hrsOrd !== 56) hrClassOrd = 'text-red-600 font-bold';
+
+                        if (emp.cuadrilla === 'Fijo Noche' && (b.hrsExt !== 42)) hrClassExt = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla === 'Oficina' && (b.hrsExt !== 0)) hrClassExt = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina' && b.hrsExt !== 28) hrClassExt = 'text-red-600 font-bold';
+
                         html += `
                             <tr class="hover:bg-slate-50 print:border-b print:border-slate-300">
-                                <td class="px-4 py-3"><div class="font-bold text-slate-800">${emp.nombre}</div><div class="text-[10px] text-slate-500">${emp.cuadrilla} - ${emp.maquina}</div></td>
-                                <td class="px-4 py-3 text-center font-mono ${b.hrsOrd !== 56 && b.hrsOrd !== 42 ? 'text-red-600 font-bold' : 'text-slate-600'}">${b.hrsOrd}</td>
-                                <td class="px-4 py-3 text-center font-mono ${b.hrsExt !== 28 && b.hrsExt !== 42 ? 'text-red-600 font-bold' : 'text-slate-600'}">${b.hrsExt}</td>
+                                <td class="px-4 py-3"><div class="font-bold text-slate-800">${emp.nombre}</div><div class="text-[10px] text-slate-500">${emp.maquina}</div></td>
+                                <td class="px-4 py-3 text-center"><span class="bg-slate-100 px-2 py-1 rounded text-xs border border-slate-200 font-bold">${emp.cuadrilla}</span></td>
+                                <td class="px-4 py-3 text-center font-mono ${hrClassOrd}">${b.hrsOrd}</td>
+                                <td class="px-4 py-3 text-center font-mono ${hrClassExt}">${b.hrsExt}</td>
                                 <td class="px-4 py-3 text-right text-red-600 font-medium">${App.formatMoney(b.cafeteria)}</td>
                                 <td class="px-4 py-3 text-right text-green-700 font-bold bg-green-50/30 print:bg-transparent">${App.formatMoney(b.neto)}</td>
                                 <td class="px-4 py-3 text-center no-print">
@@ -992,6 +1036,7 @@
                 
                 let defaultOrd = 56; let defaultExt = 28;
                 if (emp.cuadrilla === 'Fijo Noche') { defaultOrd = 42; defaultExt = 42; }
+                else if (emp.cuadrilla === 'Oficina') { defaultOrd = 88; defaultExt = 0; }
 
                 const currentOrd = emp.hrsOrd !== undefined ? emp.hrsOrd : defaultOrd;
                 const currentExt = emp.hrsExt !== undefined ? emp.hrsExt : defaultExt;
@@ -1011,14 +1056,15 @@
                                 <div class="bg-blue-50 p-4 rounded-lg border border-blue-200 space-y-4">
                                     <h3 class="text-sm font-bold text-blue-900 border-b border-blue-200 pb-1">Control de Horas Físicas</h3>
                                     
-                                    <div class="flex gap-2 mb-2">
-                                        <button type="button" onclick="document.getElementById('p-hord').value=56; document.getElementById('p-hext').value=28;" class="flex-1 bg-orange-100 border border-orange-300 text-orange-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-orange-200"><i class="fa-solid fa-sun mr-1"></i> Regla de Día (56/28)</button>
-                                        <button type="button" onclick="document.getElementById('p-hord').value=42; document.getElementById('p-hext').value=42;" class="flex-1 bg-indigo-100 border border-indigo-300 text-indigo-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-indigo-200"><i class="fa-solid fa-moon mr-1"></i> Regla de Noche (42/42)</button>
+                                    <div class="flex flex-wrap gap-2 mb-2">
+                                        <button type="button" onclick="document.getElementById('p-hord').value=56; document.getElementById('p-hext').value=28;" class="flex-1 bg-orange-100 border border-orange-300 text-orange-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-orange-200 min-w-[80px]"><i class="fa-solid fa-sun mr-1"></i> Día (56/28)</button>
+                                        <button type="button" onclick="document.getElementById('p-hord').value=42; document.getElementById('p-hext').value=42;" class="flex-1 bg-indigo-100 border border-indigo-300 text-indigo-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-indigo-200 min-w-[80px]"><i class="fa-solid fa-moon mr-1"></i> Noche (42/42)</button>
+                                        <button type="button" onclick="document.getElementById('p-hord').value=88; document.getElementById('p-hext').value=0;" class="flex-1 bg-sky-100 border border-sky-300 text-sky-800 text-[10px] py-1 font-bold rounded shadow-sm hover:bg-sky-200 min-w-[80px]"><i class="fa-solid fa-briefcase mr-1"></i> Oficina (88/0)</button>
                                     </div>
 
                                     <div><label class="block text-xs font-semibold text-blue-800 mb-1">Horas Ordinarias</label><input type="number" id="p-hord" value="${currentOrd}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white font-mono font-bold"></div>
                                     <div><label class="block text-xs font-semibold text-blue-800 mb-1">Horas Extras</label><input type="number" id="p-hext" value="${currentExt}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white font-mono font-bold"></div>
-                                    <p class="text-[10px] text-blue-700 leading-tight">La jornada de 12h de Noche se calcula como 6 hrs Ordinarias + 6 Extras por ley.</p>
+                                    <p class="text-[10px] text-blue-700 leading-tight">Las horas de Oficina por ley son 44h a la semana (88 Catorcena).</p>
                                 </div>
 
                                 <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-4">
@@ -1077,20 +1123,20 @@
                 let html = `
                     <div class="mb-6 border-b border-slate-200 pb-4">
                         <h2 class="text-xl font-bold text-slate-800">Mapa Operativo de Planta</h2>
-                        <p class="text-xs text-slate-500 mt-1 mb-4">Seleccione un Supervisor y una Máquina para evaluar la matriz de cobertura del personal.</p>
+                        <p class="text-xs text-slate-500 mt-1 mb-4">Seleccione un Supervisor y un Área para evaluar la matriz de cobertura del personal.</p>
                         
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl bg-slate-50 p-4 rounded-lg border border-slate-200">
                             <div>
-                                <label class="block text-xs font-bold text-slate-700 mb-1">Supervisor de Turno</label>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Supervisor / Jefatura</label>
                                 <select id="proc-sup" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onSupervisorProcesosChange()">
-                                    <option value="">-- Seleccionar Supervisor --</option>
+                                    <option value="">-- Seleccionar Jefatura --</option>
                                     ${supervisores.map(s => `<option value="${s.nombre}">${s.nombre}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-xs font-bold text-slate-700 mb-1">Máquina / Área (A cargo del Supervisor)</label>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Máquina / Área</label>
                                 <select id="proc-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.filterProcesosMatrix()" disabled>
-                                    <option value="">-- Seleccione Supervisor Primero --</option>
+                                    <option value="">-- Seleccione Jefatura Primero --</option>
                                 </select>
                             </div>
                         </div>
@@ -1098,7 +1144,7 @@
                     <div id="procesos-matrix-area">
                         <div class="text-center py-12 text-slate-400 bg-slate-50 rounded-lg border border-slate-200 border-dashed">
                             <i class="fa-solid fa-sitemap text-4xl mb-3 text-slate-300"></i><br>
-                            Seleccione Supervisor y Máquina para cargar la matriz de vacantes.
+                            Seleccione Jefatura y Área para cargar la matriz de vacantes.
                         </div>
                     </div>
                 `;
@@ -1110,7 +1156,7 @@
                 const maqSelect = document.getElementById('proc-maq');
                 
                 if (!supName) {
-                    maqSelect.innerHTML = '<option value="">-- Seleccione Supervisor Primero --</option>';
+                    maqSelect.innerHTML = '<option value="">-- Seleccione Jefatura Primero --</option>';
                     maqSelect.disabled = true;
                     this.filterProcesosMatrix();
                     return;
@@ -1120,10 +1166,10 @@
                 const maquinas = supervisor && supervisor.maquinas ? supervisor.maquinas : [];
                 
                 if (maquinas.length === 0) {
-                    maqSelect.innerHTML = '<option value="">-- Supervisor sin máquinas asignadas --</option>';
+                    maqSelect.innerHTML = '<option value="">-- Jefatura sin áreas asignadas --</option>';
                     maqSelect.disabled = true;
                 } else {
-                    maqSelect.innerHTML = '<option value="">-- Seleccionar Máquina --</option>' + 
+                    maqSelect.innerHTML = '<option value="">-- Seleccionar Área --</option>' + 
                         maquinas.map(m => `<option value="${m}">${m}</option>`).join('');
                     maqSelect.disabled = false;
                 }
@@ -1152,8 +1198,8 @@
                 let matrixHtml = `
                     <div class="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm mb-8">
                         <div class="bg-blue-900 text-white p-3 font-bold text-sm flex justify-between items-center">
-                            <span><i class="fa-solid fa-microchip mr-2 text-blue-300"></i> ${maq}</span>
-                            <span class="text-xs bg-blue-800 px-2 py-1 rounded">Supervisor: ${sup}</span>
+                            <span><i class="fa-solid fa-layer-group mr-2 text-blue-300"></i> ${maq}</span>
+                            <span class="text-xs bg-blue-800 px-2 py-1 rounded">Jefatura: ${sup}</span>
                         </div>
                         <div class="overflow-x-auto">
                             <table class="min-w-full divide-y divide-slate-200 text-sm">
@@ -1184,7 +1230,7 @@
                 });
 
                 if (puestosOficiales.length === 0) {
-                    matrixHtml += `<tr><td colspan="${cuadrillas.length + 1}" class="px-4 py-6 text-center text-slate-500">No se han configurado puestos requeridos para esta máquina. Diríjase a Estructura para agregarlos.</td></tr>`;
+                    matrixHtml += `<tr><td colspan="${cuadrillas.length + 1}" class="px-4 py-6 text-center text-slate-500">No se han configurado puestos requeridos para esta Área. Diríjase a Estructura para agregarlos.</td></tr>`;
                 }
 
                 matrixHtml += `</tbody></table></div></div>`;
@@ -1260,7 +1306,7 @@
             },
 
             // ==========================================
-            // VISTA DE SUPERVISOR (NUEVA VISTA)
+            // VISTA DE SUPERVISOR
             // ==========================================
             async renderSupervisorDashboard() {
                 const supInfo = App.currentUser.supervisorInfo;
@@ -1269,11 +1315,11 @@
                     <div class="fade-in space-y-6">
                         <div class="bg-gradient-to-r from-indigo-900 to-indigo-700 rounded-xl p-6 text-white shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
                             <div>
-                                <h1 class="text-2xl font-bold mb-1">Portal del Supervisor</h1>
+                                <h1 class="text-2xl font-bold mb-1">Portal de Jefatura</h1>
                                 <p class="text-indigo-200 text-sm"><i class="fa-solid fa-user-tie mr-1"></i> ${supInfo.nombre}</p>
                             </div>
                             <div class="text-left md:text-right">
-                                <div class="text-xs text-indigo-200 uppercase mb-1">Tus Cuadrillas Activas:</div>
+                                <div class="text-xs text-indigo-200 uppercase mb-1">Tus Turnos a Cargo:</div>
                                 <div class="flex gap-1 flex-wrap md:justify-end">
                                     ${(supInfo.cuadrillas||[]).map(c => `<span class="bg-indigo-800 border border-indigo-600 px-2 py-1 rounded font-bold text-[10px] uppercase shadow-sm">${c}</span>`).join('')}
                                 </div>
@@ -1289,7 +1335,7 @@
             },
 
             // ==========================================
-            // VISTA DEL EMPLEADO (MANTENIDA)
+            // VISTA DEL EMPLEADO
             // ==========================================
             renderEmployeeDashboard() {
                 const container = document.getElementById('app-container');
@@ -1297,7 +1343,7 @@
                     <div class="fade-in space-y-6">
                         <div class="flex flex-wrap justify-center mb-6 gap-2 no-print">
                             <button id="btn-view-boleta" onclick="UI.toggleEmployeeView('boleta')" class="px-6 py-2 text-sm font-bold rounded-md bg-blue-800 text-white shadow transition-all"><i class="fa-solid fa-file-invoice-dollar mr-1"></i> Mis Boletas</button>
-                            <button id="btn-view-new" onclick="UI.toggleEmployeeView('new')" class="px-6 py-2 text-sm font-bold rounded-md bg-slate-200 text-slate-700 transition-all hover:bg-slate-300"><i class="fa-solid fa-calendar-check mr-1"></i> Mi Turno</button>
+                            <button id="btn-view-new" onclick="UI.toggleEmployeeView('new')" class="px-6 py-2 text-sm font-bold rounded-md bg-slate-200 text-slate-700 transition-all hover:bg-slate-300"><i class="fa-solid fa-calendar-check mr-1"></i> Mi Horario</button>
                         </div>
                         <div id="employee-content-area"></div>
                     </div>
@@ -1336,6 +1382,13 @@
                 } else {
                     area.innerHTML = `
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden fade-in">
+                            <div id="legend-new" class="flex flex-wrap gap-2 text-[10px] font-bold uppercase p-3 bg-slate-50 border-b border-slate-100 justify-center">
+                                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-orange-100 border border-orange-300"></span> Día (12h)</span>
+                                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-indigo-100 border border-indigo-300"></span> Noche (12h)</span>
+                                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-sky-100 border border-sky-300"></span> Oficina (8h)</span>
+                                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-teal-100 border border-teal-300"></span> Sábado (4h)</span>
+                                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-green-50 border border-green-300"></span> Descanso</span>
+                            </div>
                             <div id="calendar-grid" class="grid grid-cols-7 gap-1 p-3 sm:p-5 text-center text-sm bg-slate-50"></div>
                         </div>
                     `;
@@ -1420,11 +1473,15 @@
                         else if (shift === 'T') { bgClass = 'old-tarde'; label = 'Tar (14-21)'; }
                         else if (shift === 'N') { bgClass = 'old-noche'; label = 'Noc (21-6)'; }
                         else if (shift === 'D12' || shift === 'N12') { bgClass = 'old-empalme'; label = 'Empalme'; icon = '<i class="fa-solid fa-triangle-exclamation"></i>'; }
+                        else if (shift === 'O') { bgClass = 'bg-sky-50 border border-sky-200 text-sky-800'; label = 'Oficina'; icon = '<i class="fa-solid fa-briefcase text-sky-500"></i>'; }
+                        else if (shift === 'MD') { bgClass = 'bg-teal-50 border border-teal-200 text-teal-800'; label = 'Sábado'; icon = '<i class="fa-solid fa-building-user text-teal-500"></i>'; }
                         else { bgClass = 'bg-slate-100 text-slate-400 border border-slate-200'; label = 'Libre'; }
                     } else {
                         shift = App.getNewShiftForDate(dateStr, emp.cuadrilla);
                         if (shift === 'D') { bgClass = 'bg-orange-50 border border-orange-200 text-orange-800'; label = 'Día (12h)'; icon = '<i class="fa-solid fa-sun text-orange-500"></i>'; }
                         else if (shift === 'N') { bgClass = 'bg-indigo-50 border border-indigo-200 text-indigo-800'; label = 'Noche (12h)'; icon = '<i class="fa-solid fa-moon text-indigo-500"></i>'; }
+                        else if (shift === 'O') { bgClass = 'bg-sky-50 border border-sky-200 text-sky-800'; label = 'Oficina'; icon = '<i class="fa-solid fa-briefcase text-sky-500"></i>'; }
+                        else if (shift === 'MD') { bgClass = 'bg-teal-50 border border-teal-200 text-teal-800'; label = 'Sábado'; icon = '<i class="fa-solid fa-building-user text-teal-500"></i>'; }
                         else { bgClass = 'bg-green-50 border border-green-200 text-green-800 opacity-80'; label = 'Descanso'; icon = '<i class="fa-solid fa-mug-hot text-green-600"></i>'; }
                     }
                     
