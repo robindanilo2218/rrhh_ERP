@@ -82,7 +82,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v16',
+            dbName: 'TurnoSyncDB_v17',
             version: 1,
             db: null,
             init() {
@@ -113,11 +113,19 @@
                             holidays: [ { date: '2026-05-01', name: 'Día del Trabajo', isWorked: true } ] 
                         };
                     }
+
+                    // Inicializar y asegurar configuraciones vitales
                     if (!settings.sistemaGlobal) settings.sistemaGlobal = '2-2-3';
                     if (!settings.fechaInicio) settings.fechaInicio = '2026-05-04';
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
+                    if (settings.telefonoRRHH === undefined) settings.telefonoRRHH = '';
+                    
+                    // CREDENCIALES DEL ADMINISTRADOR (NUEVO)
+                    if (!settings.adminCreds) {
+                        settings.adminCreds = { dpi: 'admin', num: 'admin', clave: 'admin' };
+                    }
 
-                    // NUEVO: Categorías Globales
+                    // Categorías Globales
                     if (!settings.categoriasMaquinas) settings.categoriasMaquinas = ['Producción Corrugado', 'Conversión', 'Mantenimiento', 'Administración'];
                     if (!settings.categoriasCompetencias) settings.categoriasCompetencias = ['Seguridad Industrial', 'Operación Técnica', 'Gestión de Calidad'];
 
@@ -230,7 +238,16 @@
                         }
                     }
                     if (data.settings) {
-                        for (const set of data.settings) await this.put('settings', set);
+                        for (const set of data.settings) {
+                            // Preservar la contraseña local de admin si la persona importa un backup para no quedarse fuera
+                            if (set.id === 'config') {
+                                const localConfig = await this.get('settings', 'config');
+                                if (localConfig && localConfig.adminCreds) {
+                                    set.adminCreds = localConfig.adminCreds;
+                                }
+                            }
+                            await this.put('settings', set);
+                        }
                     }
                     return true;
                 } catch (e) { return false; }
@@ -267,9 +284,12 @@
             },
 
             async login(dpi, numEmpleado, clave) {
-                if (dpi === 'admin' && numEmpleado === 'admin' && clave === 'admin') {
+                // Validación contra las credenciales dinámicas de Admin
+                const adm = this.settings.adminCreds;
+                if (dpi === adm.dpi && numEmpleado === adm.num && clave === adm.clave) {
                     this.currentUser = { nombre: 'Administrador General' }; this.role = 'admin'; this.updateNav(); UI.renderAdminDashboard(); return;
                 }
+
                 const emp = await DB.get('employees', dpi);
                 if (emp && emp.numEmpleado === numEmpleado && emp.clave === clave) {
                     this.currentUser = emp;
@@ -305,7 +325,7 @@
                                 <p class="text-sm text-slate-500 mt-1">Ingresa para ver tu turno, reportar horas o ver boletas</p>
                             </div>
                             <form id="login-form" class="space-y-4">
-                                <div><input type="text" id="login-dpi" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Ingresa tu DPI" required></div>
+                                <div><input type="text" id="login-dpi" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Ingresa tu DPI / Usuario" required></div>
                                 <div><input type="text" id="login-num" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Número de Empleado" required></div>
                                 <div><input type="password" id="login-clave" class="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Clave de Acceso" required></div>
                                 <button type="submit" class="w-full bg-blue-800 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg shadow-md mt-2">Ingresar al Sistema</button>
@@ -496,6 +516,7 @@
                 const listCuadrillas = App.settings.sistemaGlobal === 'Antiguo' ? ['1', '2', '3', 'Oficina'] : ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'];
                 const catMaquinas = App.settings.categoriasMaquinas || [];
                 const catCompetencias = App.settings.categoriasCompetencias || [];
+                const adminCreds = App.settings.adminCreds || { dpi: 'admin', num: 'admin', clave: 'admin' };
 
                 let html = `
                     <div class="mb-6 flex flex-col items-start gap-4">
@@ -509,6 +530,18 @@
                             <div><label class="text-xs font-bold text-blue-800 mb-1 block">Fecha de Inicio (Ancla):</label><input type="date" id="config-fecha" value="${App.settings.fechaInicio}" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()"></div>
                             <div><label class="text-xs font-bold text-blue-800 mb-1 block">Rotación Sistema Antiguo:</label><select id="config-rotacion" class="w-full border border-blue-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-blue-500" onchange="UI.updateGlobalSettings()"><option value="atras" ${App.settings.direccionRotacion === 'atras' ? 'selected' : ''}>Atrás (Mañ -> Noc -> Tar)</option><option value="adelante" ${App.settings.direccionRotacion === 'adelante' ? 'selected' : ''}>Adelante (Mañ -> Tar -> Noc)</option></select></div>
                             <div><label class="text-xs font-bold text-green-700 mb-1 block"><i class="fa-brands fa-whatsapp"></i> Teléfono RRHH:</label><input type="text" id="config-tel-rrhh" value="${App.settings.telefonoRRHH || ''}" class="w-full border border-green-300 rounded px-3 py-2 text-sm bg-white focus:ring-1 focus:ring-green-500" onchange="UI.updateGlobalSettings()"></div>
+                        </div>
+
+                        <!-- CREDENCIALES DE ADMIN -->
+                        <div class="w-full bg-red-50 border border-red-200 p-4 rounded-lg mt-2 shadow-sm">
+                            <h3 class="font-bold text-red-800 mb-3 border-b border-red-200 pb-1"><i class="fa-solid fa-lock mr-2"></i> Credenciales de Acceso Administrador (RRHH)</h3>
+                            <form onsubmit="UI.updateAdminCreds(event)" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div><label class="text-xs font-bold text-red-700 mb-1 block">DPI / Usuario Admin:</label><input type="text" id="cfg-adm-dpi" value="${adminCreds.dpi}" required class="w-full border border-red-300 rounded px-3 py-1.5 text-sm bg-white focus:ring-1 focus:ring-red-500"></div>
+                                <div><label class="text-xs font-bold text-red-700 mb-1 block">No. Empleado Admin:</label><input type="text" id="cfg-adm-num" value="${adminCreds.num}" required class="w-full border border-red-300 rounded px-3 py-1.5 text-sm bg-white focus:ring-1 focus:ring-red-500"></div>
+                                <div><label class="text-xs font-bold text-red-700 mb-1 block">Clave Admin:</label><input type="text" id="cfg-adm-clave" value="${adminCreds.clave}" required class="w-full border border-red-300 rounded px-3 py-1.5 text-sm bg-white focus:ring-1 focus:ring-red-500"></div>
+                                <div class="flex items-end"><button type="submit" class="w-full bg-red-700 hover:bg-red-800 text-white font-bold py-1.5 rounded text-sm transition-colors shadow-sm"><i class="fa-solid fa-floppy-disk mr-1"></i> Cambiar Credenciales</button></div>
+                            </form>
+                            <p class="text-[10px] text-red-600 mt-2 italic leading-tight">ATENCIÓN: Asegúrese de recordar estas credenciales. Si las olvida y cierra sesión, perderá el acceso a este panel de administración maestro.</p>
                         </div>
                     </div>
 
@@ -667,6 +700,19 @@
                 contentArea.innerHTML = html;
             },
 
+            async updateAdminCreds(e) {
+                e.preventDefault();
+                const dpi = document.getElementById('cfg-adm-dpi').value.trim();
+                const num = document.getElementById('cfg-adm-num').value.trim();
+                const clave = document.getElementById('cfg-adm-clave').value.trim();
+                
+                if(confirm("¿Está seguro de cambiar las credenciales del Administrador Maestro? Deberá usar los nuevos datos la próxima vez que inicie sesión.")) {
+                    App.settings.adminCreds = { dpi, num, clave };
+                    await DB.put('settings', App.settings);
+                    alert("Credenciales actualizadas correctamente.");
+                }
+            },
+
             async updateGlobalSettings() { 
                 App.settings.sistemaGlobal = document.getElementById('config-sistema').value; 
                 App.settings.fechaInicio = document.getElementById('config-fecha').value; 
@@ -819,7 +865,6 @@
                 const catCompetencias = App.settings.categoriasCompetencias || [];
                 const allCompetencias = App.settings.competencias || [];
                 
-                // Buscar competencias requeridas por la máquina que tiene asignada
                 const currentMaqObj = App.settings.maquinas.find(m => m.nombre === emp.maquina);
                 const maqReqComps = currentMaqObj ? (currentMaqObj.competenciasRequeridas || []) : [];
 
@@ -836,7 +881,7 @@
                                 <div class="space-y-4">
                                     <h3 class="text-sm font-bold border-b border-slate-100 pb-1 text-slate-700">Datos Básicos</h3>
                                     <div><label class="block text-xs font-semibold mb-1">Nombre Completo</label><input type="text" id="e-nombre" value="${emp.nombre}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500"></div>
-                                    <div><label class="block text-xs font-semibold mb-1">DPI</label><input type="text" id="e-dpi" value="${emp.dpi}" ${dpi?'readonly':''} required class="w-full border border-slate-300 rounded px-3 py-2 text-sm ${dpi?'bg-slate-100':''}"></div>
+                                    <div><label class="block text-xs font-semibold mb-1">DPI / Usuario</label><input type="text" id="e-dpi" value="${emp.dpi}" ${dpi?'readonly':''} required class="w-full border border-slate-300 rounded px-3 py-2 text-sm ${dpi?'bg-slate-100':''}"></div>
                                     <div><label class="block text-xs font-semibold mb-1">No. Empleado</label><input type="text" id="e-num" value="${emp.numEmpleado}" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm"></div>
                                     <div><label class="block text-xs font-semibold mb-1 text-blue-700">Clave de Acceso (App)</label><input type="text" id="e-clave" value="${emp.clave}" placeholder="Asigna una contraseña" required class="w-full border border-blue-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 bg-blue-50"></div>
                                     <div><label class="block text-xs font-semibold mb-1 text-green-700"><i class="fa-brands fa-whatsapp"></i> Número de WhatsApp</label><input type="text" id="e-telefono" value="${emp.telefono || ''}" placeholder="Ej. 55550000" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500"></div>
@@ -979,15 +1024,13 @@
                     setTimeout(() => { UI.onMaquinaEmployeeChange(emp.puesto); }, 50);
                 }, 50);
 
-                // Sobrescribimos el onChange de maquina para guardar la info antes de recargar
                 document.getElementById('e-maq').onchange = () => {
                     emp.maquina = document.getElementById('e-maq').value;
-                    // Preservar temporalmente checkboxes
                     const certs = []; document.querySelectorAll('input[name="emp_certificaciones"]:checked').forEach(cb => certs.push(cb.value));
                     emp.competencias = certs;
-                    App.currentUser = emp; // Hack temporal para re-render
+                    App.currentUser = emp; 
                     UI.onMaquinaEmployeeChange();
-                    UI.renderEmployeeForm(dpi); // Recargar la vista para pintar las obligatorias
+                    UI.renderEmployeeForm(dpi); 
                 };
 
                 document.getElementById('emp-form').addEventListener('submit', async (e) => {
@@ -1289,7 +1332,6 @@
             async renderAdminProcesos() {
                 const contentArea = document.getElementById('admin-content-area');
                 const supervisores = App.settings.supervisores || [];
-                const maquinasGlobales = App.settings.maquinas || [];
                 const catMaquinas = App.settings.categoriasMaquinas || [];
 
                 let html = `
@@ -1349,7 +1391,6 @@
                 const supervisor = App.settings.supervisores.find(s => s.nombre === supName);
                 let maquinasNombres = supervisor && supervisor.maquinas ? supervisor.maquinas : [];
                 
-                // Aplicar Filtro de Categoría si no es ALL
                 if(catFiltro !== 'ALL') {
                     maquinasNombres = maquinasNombres.filter(mNombre => {
                         const mData = App.settings.maquinas.find(mObj => mObj.nombre === mNombre);
@@ -1383,7 +1424,6 @@
                 const puestosOficiales = maquinaData && maquinaData.puestos ? maquinaData.puestos : [];
                 const reqCompetencias = maquinaData && maquinaData.competenciasRequeridas ? maquinaData.competenciasRequeridas : [];
                 
-                // --- 1. MATRIZ DE COBERTURA Y VACANTES ---
                 let html = `
                     <div class="mb-8">
                         <h3 class="text-lg font-bold text-slate-800 mb-3"><i class="fa-solid fa-users-viewfinder text-blue-600 mr-1"></i> Matriz de Cobertura (Requerimientos Físicos)</h3>
@@ -1414,7 +1454,7 @@
                     cuadrillas.forEach(cuad => {
                         const workers = team.filter(e => e.cuadrilla === cuad && e.puesto === pname);
                         if (workers.length >= pcant) {
-                            totalOcupados += pcant; // Contar hasta el limite requerido
+                            totalOcupados += pcant;
                             html += `<td class="px-2 py-2 text-center border-r border-slate-100"><div class="bg-green-50 border border-green-300 text-green-800 font-bold px-2 py-1 rounded text-xs shadow-sm">${workers.map(w => w.nombre.split(' ')[0]).join('<br>')}</div></td>`;
                         } else if (workers.length > 0) {
                             totalOcupados += workers.length;
@@ -1429,7 +1469,6 @@
                 if (puestosOficiales.length === 0) html += `<tr><td colspan="${cuadrillas.length + 1}" class="px-4 py-6 text-center text-slate-500">Configura los puestos requeridos en la pestaña Estructura.</td></tr>`;
                 html += `</tbody></table></div></div></div>`;
 
-                // --- 2. MATRIZ DE COMPETENCIAS (SKILLS MATRIX CATEGORIZADA) ---
                 html += `
                     <div class="mb-4 mt-8">
                         <h3 class="text-lg font-bold text-slate-800 mb-1"><i class="fa-solid fa-graduation-cap text-orange-500 mr-1"></i> Matriz de Competencias y Talento (Skills Matrix)</h3>
@@ -1442,8 +1481,6 @@
                 } else if (team.length === 0) {
                     html += `<div class="bg-slate-50 border border-slate-200 text-slate-500 p-4 rounded text-sm text-center">No hay personal asignado a esta área para evaluar.</div>`;
                 } else {
-                    
-                    // Agrupar los requerimientos por categoria para dibujar los headers agrupados
                     const allCompsDB = App.settings.competencias || [];
                     const groupedReqs = {};
                     reqCompetencias.forEach(rc => {
@@ -1458,7 +1495,6 @@
                             <div class="overflow-x-auto">
                                 <table class="min-w-full divide-y divide-slate-200 text-sm">
                                     <thead class="bg-orange-50">
-                                        <!-- Fila de Categorías -->
                                         <tr>
                                             <th class="px-4 py-2 border-r border-orange-200 border-b border-orange-200" rowspan="2"></th>
                                             ${Object.keys(groupedReqs).map(cat => `
@@ -1466,7 +1502,6 @@
                                             `).join('')}
                                             <th class="px-4 py-2 border-l-2 border-orange-200" rowspan="2"></th>
                                         </tr>
-                                        <!-- Fila de Competencias -->
                                         <tr>
                                             ${Object.keys(groupedReqs).map(cat => 
                                                 groupedReqs[cat].map(c => `<th class="px-2 py-2 text-center font-bold text-orange-900 border-r border-orange-200 text-xs w-28"><div class="truncate w-full leading-tight" title="${c}">${c}</div></th>`).join('')
@@ -1572,7 +1607,7 @@
             },
 
             // ==========================================
-            // VISTAS DE SUPERVISOR (NUEVA PESTAÑA PROCESOS AÑADIDA)
+            // VISTAS DE SUPERVISOR
             // ==========================================
             async renderSupervisorDashboard() {
                 const supInfo = App.currentUser.supervisorInfo;
