@@ -64,7 +64,7 @@
     </main>
 
     <footer class="bg-slate-200 text-slate-500 text-center py-4 text-xs mt-auto no-print">
-        &copy; 2026 TurnoSync Industrial - Modelo Integral de Turnos y Talento. Corrugadora Guatemala S.A.
+        &copy; 2026 TurnoSync Industrial - Modelo Integral de Turnos y Talento. CRGM
     </footer>
 
     <script>
@@ -82,7 +82,7 @@
         // BASE DE DATOS LOCAL (IndexedDB)
         // ==========================================
         const DB = {
-            dbName: 'TurnoSyncDB_v17',
+            dbName: 'TurnoSyncDB_v18',
             version: 1,
             db: null,
             init() {
@@ -120,16 +120,13 @@
                     if (!settings.direccionRotacion) settings.direccionRotacion = 'atras';
                     if (settings.telefonoRRHH === undefined) settings.telefonoRRHH = '';
                     
-                    // CREDENCIALES DEL ADMINISTRADOR (NUEVO)
                     if (!settings.adminCreds) {
                         settings.adminCreds = { dpi: 'admin', num: 'admin', clave: 'admin' };
                     }
 
-                    // Categorías Globales
                     if (!settings.categoriasMaquinas) settings.categoriasMaquinas = ['Producción Corrugado', 'Conversión', 'Mantenimiento', 'Administración'];
                     if (!settings.categoriasCompetencias) settings.categoriasCompetencias = ['Seguridad Industrial', 'Operación Técnica', 'Gestión de Calidad'];
 
-                    // Catálogo de Competencias y Certificaciones estructurado
                     if (!settings.competencias || (settings.competencias.length > 0 && typeof settings.competencias[0] === 'string')) {
                         settings.competencias = [
                             {nombre: 'LOTO (Bloqueo y Etiquetado)', categoria: 'Seguridad Industrial'}, 
@@ -139,11 +136,10 @@
                         ];
                     }
 
-                    // Migración a Máquinas con Categoría
                     if (!settings.maquinas) {
                         settings.maquinas = [{ 
-                            nombre: 'Corrugadora Principal', 
-                            categoria: 'Producción Corrugado',
+                            nombre: 'Maquina Principal', 
+                            categoria: 'Producción',
                             activa: true,
                             puestos: [
                                 {nombre: 'Operador A', cantidad: 1}, 
@@ -154,14 +150,19 @@
                         }];
                     } else {
                         settings.maquinas.forEach(m => {
-                            if (!m.categoria) m.categoria = 'Producción Corrugado';
+                            if (!m.categoria) m.categoria = 'Producción';
                             if (m.puestos && m.puestos.length > 0 && typeof m.puestos[0] === 'string') m.puestos = m.puestos.map(p => ({ nombre: p, cantidad: 1 }));
                             if(!m.competenciasRequeridas) m.competenciasRequeridas = [];
                         });
                     }
                     
                     if (!settings.supervisores) {
-                        settings.supervisores = [{ nombre: 'Supervisor General', telefono: '55550000', maquinas: ['Corrugadora Principal'], cuadrillas: ['A', 'B', 'C', 'D', 'Oficina', '1', '2', '3'] }];
+                        settings.supervisores = [{ 
+                            nombre: 'Supervisor General', 
+                            telefono: '55550000', 
+                            maquinas: ['Maquina Principal'], 
+                            cuadrillas: ['A (1)', 'B (2)', 'C (3)', 'D (4)', 'Fijo Día (7-5)', 'Fijo Noche', 'Oficina (L-V)'] 
+                        }];
                     }
                     
                     if (!settings.puestos) settings.puestos = ['Operador A', 'Electricista', 'Ayudante', 'Tintero', 'Entarimador'];
@@ -239,7 +240,6 @@
                     }
                     if (data.settings) {
                         for (const set of data.settings) {
-                            // Preservar la contraseña local de admin si la persona importa un backup para no quedarse fuera
                             if (set.id === 'config') {
                                 const localConfig = await this.get('settings', 'config');
                                 if (localConfig && localConfig.adminCreds) {
@@ -284,12 +284,10 @@
             },
 
             async login(dpi, numEmpleado, clave) {
-                // Validación contra las credenciales dinámicas de Admin
                 const adm = this.settings.adminCreds;
                 if (dpi === adm.dpi && numEmpleado === adm.num && clave === adm.clave) {
                     this.currentUser = { nombre: 'Administrador General' }; this.role = 'admin'; this.updateNav(); UI.renderAdminDashboard(); return;
                 }
-
                 const emp = await DB.get('employees', dpi);
                 if (emp && emp.numEmpleado === numEmpleado && emp.clave === clave) {
                     this.currentUser = emp;
@@ -356,7 +354,7 @@
 
                 let defaultOrd = 56; let defaultExt = 28;
                 if (emp.cuadrilla === 'Fijo Noche') { defaultOrd = 42; defaultExt = 42; } 
-                else if (emp.cuadrilla === 'Oficina') { defaultOrd = 88; defaultExt = 0; }
+                else if (emp.cuadrilla === 'Oficina (L-V)') { defaultOrd = 88; defaultExt = 0; }
 
                 const hrsOrd = emp.hrsOrd !== undefined ? Number(emp.hrsOrd) : defaultOrd;
                 const hrsExt = emp.hrsExt !== undefined ? Number(emp.hrsExt) : defaultExt;
@@ -402,7 +400,7 @@
                     emp.adicionales = 0; emp.feriados = 0; emp.deduccionCafeteria = 0; emp.isr = 0; emp.reportesActuales = []; 
                     
                     if(emp.cuadrilla === 'Fijo Noche') { emp.hrsOrd = 42; emp.hrsExt = 42; }
-                    else if (emp.cuadrilla === 'Oficina') { emp.hrsOrd = 88; emp.hrsExt = 0; }
+                    else if (emp.cuadrilla === 'Oficina (L-V)') { emp.hrsOrd = 88; emp.hrsExt = 0; }
                     else { emp.hrsOrd = 56; emp.hrsExt = 28; } 
                     
                     await DB.put('employees', emp);
@@ -413,7 +411,7 @@
             
             getNewShiftForDate(dateStr, cuadrilla) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
-                if (cuadrilla === 'Oficina') {
+                if (cuadrilla === 'Oficina (L-V)') {
                     const dayOfWeek = targetDate.getDay(); 
                     if (dayOfWeek >= 1 && dayOfWeek <= 5) return 'O'; 
                     if (dayOfWeek === 6) return 'MD'; 
@@ -423,21 +421,21 @@
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                 
                 let result = 'L';
-                if (cuadrilla === 'Fijo Día') { let cd = diffDays % 14; if (cd < 0) cd += 14; result = this.patternFijoDia[cd]; } 
+                if (cuadrilla === 'Fijo Día (7-5)') { let cd = diffDays % 14; if (cd < 0) cd += 14; result = this.patternFijoDia[cd]; } 
                 else if (cuadrilla === 'Fijo Noche') { let cd = diffDays % 14; if (cd < 0) cd += 14; result = this.patternFijoNoche[cd]; } 
                 else {
                     let cd = diffDays % 28; if (cd < 0) cd += 28;
-                    if (cuadrilla === 'A') result = this.patternA[cd];
-                    else if (cuadrilla === 'B') result = this.patternB[cd];
-                    else if (cuadrilla === 'C') result = this.patternC[cd];
-                    else if (cuadrilla === 'D') result = this.patternD[cd];
+                    if (cuadrilla === 'A (1)') result = this.patternA[cd];
+                    else if (cuadrilla === 'B (2)') result = this.patternB[cd];
+                    else if (cuadrilla === 'C (3)') result = this.patternC[cd];
+                    else if (cuadrilla === 'D (4)') result = this.patternD[cd];
                 }
                 return result;
             },
             
             getOldShiftForDate(dateStr, cuadrillaAntigua) {
                 const targetDate = new Date(`${dateStr}T00:00:00-06:00`);
-                if (cuadrillaAntigua === 'Oficina') {
+                if (cuadrillaAntigua === 'Oficina (L-V)') {
                     const dayOfWeek = targetDate.getDay();
                     if (dayOfWeek >= 1 && dayOfWeek <= 5) return 'O';
                     if (dayOfWeek === 6) return 'MD';
@@ -513,7 +511,7 @@
                 const supervisores = App.settings.supervisores || [];
                 const competencias = App.settings.competencias || [];
                 
-                const listCuadrillas = App.settings.sistemaGlobal === 'Antiguo' ? ['1', '2', '3', 'Oficina'] : ['A', 'B', 'C', 'D', 'Fijo Día', 'Fijo Noche', 'Oficina'];
+                const listCuadrillas = App.settings.sistemaGlobal === 'Antiguo' ? ['1', '2', '3', 'Oficina (L-V)'] : ['A (1)', 'B (2)', 'C (3)', 'D (4)', 'Fijo Día (7-5)', 'Fijo Noche', 'Oficina (L-V)'];
                 const catMaquinas = App.settings.categoriasMaquinas || [];
                 const catCompetencias = App.settings.categoriasCompetencias || [];
                 const adminCreds = App.settings.adminCreds || { dpi: 'admin', num: 'admin', clave: 'admin' };
@@ -848,6 +846,8 @@
                                 <td class="px-4 py-3 text-center"><span class="bg-orange-100 text-orange-800 font-bold px-2 py-1 rounded-full text-xs">${certCnt}</span></td>
                                 <td class="px-4 py-3 text-center">
                                     <button onclick="UI.renderEmployeeForm('${emp.dpi}')" class="text-blue-600 hover:text-blue-800 px-2" title="Editar Perfil / Talento"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <button onclick="DB.exportEmployeeJSON('${emp.dpi}')" class="text-blue-600 hover:text-blue-800 px-2" title="Descargar Perfil Seguro"><i class="fa-solid fa-download"></i></button>
+                                    ${emp.telefono ? `<a href="https://wa.me/502${emp.telefono}?text=Hola%20${encodeURIComponent(emp.nombre)},%20te%20adjunto%20el%20archivo%20JSON%20de%20tu%20perfil%20para%20la%20App%20TurnoSync.%20(Recuerda%20importarlo%20en%20la%20pantalla%20de%20inicio)" target="_blank" class="text-green-500 hover:text-green-700 px-2" title="Enviar Archivo por WhatsApp"><i class="fa-brands fa-whatsapp text-lg"></i></a>` : ''}
                                 </td>
                             </tr>
                         `;
@@ -857,9 +857,14 @@
                 contentArea.innerHTML = html;
             },
 
-            async renderEmployeeForm(dpi = null) {
-                let emp = { nombre: '', dpi: '', numEmpleado: '', clave: '', telefono: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A', cuadrillaAntigua: '1', salarioBase: 5001.60, turnosVacacionesDisponibles: 10, competencias: [], meritos: '' };
-                if (dpi) emp = await DB.get('employees', dpi);
+            async renderEmployeeForm(dpi = null, tempData = null) {
+                let emp;
+                if (tempData) {
+                    emp = tempData; // Usa los datos que el usuario ya estaba escribiendo
+                } else {
+                    emp = { nombre: '', dpi: '', numEmpleado: '', clave: '', telefono: '', fechaIngreso: '', supervisor: '', maquina: '', puesto: '', cuadrilla: 'A (1)', cuadrillaAntigua: '1', salarioBase: 5001.60, turnosVacacionesDisponibles: 10, competencias: [], meritos: '' };
+                    if (dpi) emp = await DB.get('employees', dpi);
+                }
 
                 const supervisores = App.settings.supervisores || [];
                 const catCompetencias = App.settings.categoriasCompetencias || [];
@@ -900,7 +905,7 @@
                                     </div>
                                     
                                     <div><label class="block text-xs font-semibold mb-1">Área / Máquina</label>
-                                        <select id="e-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" onchange="UI.onMaquinaEmployeeChange(); UI.renderEmployeeForm(document.getElementById('e-dpi').value);" ${!emp.supervisor ? 'disabled' : ''}>
+                                        <select id="e-maq" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500" ${!emp.supervisor ? 'disabled' : ''}>
                                             <option value="">-- Seleccione Jefatura Primero --</option>
                                         </select>
                                     </div>
@@ -916,17 +921,17 @@
                                         <label class="block text-xs font-bold text-blue-700 mb-1">Turno Asignado</label>
                                         <select id="e-cuadrilla" class="w-full border border-blue-400 rounded px-3 py-2 text-sm bg-blue-50">
                                             <optgroup label="2-2-3 Rotativo">
-                                                <option value="A" ${emp.cuadrilla==='A'?'selected':''}>Cuadrilla A</option>
-                                                <option value="B" ${emp.cuadrilla==='B'?'selected':''}>Cuadrilla B</option>
-                                                <option value="C" ${emp.cuadrilla==='C'?'selected':''}>Cuadrilla C</option>
-                                                <option value="D" ${emp.cuadrilla==='D'?'selected':''}>Cuadrilla D</option>
+                                                <option value="A (1)" ${emp.cuadrilla==='A (1)'?'selected':''}>Cuadrilla A (1)</option>
+                                                <option value="B (2)" ${emp.cuadrilla==='B (2)'?'selected':''}>Cuadrilla B (2)</option>
+                                                <option value="C (3)" ${emp.cuadrilla==='C (3)'?'selected':''}>Cuadrilla C (3)</option>
+                                                <option value="D (4)" ${emp.cuadrilla==='D (4)'?'selected':''}>Cuadrilla D (4)</option>
                                             </optgroup>
                                             <optgroup label="Turnos Fijos">
-                                                <option value="Fijo Día" ${emp.cuadrilla==='Fijo Día'?'selected':''}>Fijo Día</option>
+                                                <option value="Fijo Día (7-5)" ${emp.cuadrilla==='Fijo Día (7-5)'?'selected':''}>Fijo Día (7-5)</option>
                                                 <option value="Fijo Noche" ${emp.cuadrilla==='Fijo Noche'?'selected':''}>Fijo Noche</option>
                                             </optgroup>
                                             <optgroup label="Administrativos">
-                                                <option value="Oficina" ${emp.cuadrilla==='Oficina'?'selected':''}>Oficina (Lun-Sáb)</option>
+                                                <option value="Oficina (L-V)" ${emp.cuadrilla==='Oficina (L-V)'?'selected':''}>Oficina (L-V)</option>
                                             </optgroup>
                                             <optgroup label="Otros">
                                                 <option value="VOL" ${emp.cuadrilla==='VOL'?'selected':''}>Comodín (Volante)</option>
@@ -940,7 +945,7 @@
                                             <option value="1" ${emp.cuadrillaAntigua==='1'?'selected':''}>Turno 1</option>
                                             <option value="2" ${emp.cuadrillaAntigua==='2'?'selected':''}>Turno 2</option>
                                             <option value="3" ${emp.cuadrillaAntigua==='3'?'selected':''}>Turno 3</option>
-                                            <option value="Oficina" ${emp.cuadrillaAntigua==='Oficina'?'selected':''}>Oficina (Lun-Sáb)</option>
+                                            <option value="Oficina (L-V)" ${emp.cuadrillaAntigua==='Oficina (L-V)'?'selected':''}>Oficina (L-V)</option>
                                         </select>
                                     </div>
                                     
@@ -1008,7 +1013,7 @@
                             </div>
 
                             <div class="flex justify-between pt-4 border-t border-slate-200 mt-6">
-                                ${dpi ? `<button type="button" onclick="UI.deleteEmployee('${emp.dpi}')" class="text-red-600 hover:text-red-800 text-sm font-bold"><i class="fa-solid fa-trash-can mr-1"></i> Eliminar Empleado</button>` : '<div></div>'}
+                                ${dpi && !tempData ? `<button type="button" onclick="UI.deleteEmployee('${emp.dpi}')" class="text-red-600 hover:text-red-800 text-sm font-bold"><i class="fa-solid fa-trash-can mr-1"></i> Eliminar Empleado</button>` : '<div></div>'}
                                 <div>
                                     <button type="button" onclick="UI.showAdminTab('empleados')" class="mr-4 text-sm text-slate-500 font-medium">Cancelar</button>
                                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded text-sm font-bold shadow-md"><i class="fa-solid fa-floppy-disk mr-2"></i> Guardar Perfil Completo</button>
@@ -1025,12 +1030,31 @@
                 }, 50);
 
                 document.getElementById('e-maq').onchange = () => {
-                    emp.maquina = document.getElementById('e-maq').value;
-                    const certs = []; document.querySelectorAll('input[name="emp_certificaciones"]:checked').forEach(cb => certs.push(cb.value));
-                    emp.competencias = certs;
-                    App.currentUser = emp; 
-                    UI.onMaquinaEmployeeChange();
-                    UI.renderEmployeeForm(dpi); 
+                    // 1. Guardar las certificaciones actuales marcadas
+                    const certs = []; 
+                    document.querySelectorAll('input[name="emp_certificaciones"]:checked').forEach(cb => certs.push(cb.value));
+                    
+                    // 2. Tomar foto exacta de todo lo que el usuario ha escrito
+                    const currentData = {
+                        dpi: document.getElementById('e-dpi').value.trim(),
+                        nombre: document.getElementById('e-nombre').value.trim(),
+                        numEmpleado: document.getElementById('e-num').value.trim(),
+                        clave: document.getElementById('e-clave').value.trim(),
+                        telefono: document.getElementById('e-telefono').value.trim(),
+                        fechaIngreso: document.getElementById('e-fecha').value,
+                        supervisor: document.getElementById('e-sup').value.trim(),
+                        maquina: document.getElementById('e-maq').value.trim(), // La nueva máquina seleccionada
+                        puesto: document.getElementById('e-puesto').value,
+                        cuadrilla: document.getElementById('e-cuadrilla').value,
+                        cuadrillaAntigua: document.getElementById('e-old').value,
+                        salarioBase: Number(document.getElementById('e-salario').value),
+                        turnosVacacionesDisponibles: Number(document.getElementById('e-vac').value),
+                        competencias: certs,
+                        meritos: document.getElementById('e-meritos').value
+                    };
+                    
+                    // 3. Recargar el formulario con los datos preservados
+                    UI.renderEmployeeForm(dpi, currentData); 
                 };
 
                 document.getElementById('emp-form').addEventListener('submit', async (e) => {
@@ -1183,11 +1207,11 @@
                         const b = App.calcularBoletaCatorcenal(emp);
                         let hrClassOrd = 'text-slate-600'; let hrClassExt = 'text-slate-600';
                         if (emp.cuadrilla === 'Fijo Noche' && (b.hrsOrd !== 42)) hrClassOrd = 'text-red-600 font-bold';
-                        else if (emp.cuadrilla === 'Oficina' && (b.hrsOrd !== 88)) hrClassOrd = 'text-red-600 font-bold';
-                        else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina' && b.hrsOrd !== 56) hrClassOrd = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla === 'Oficina (L-V)' && (b.hrsOrd !== 88)) hrClassOrd = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina (L-V)' && b.hrsOrd !== 56) hrClassOrd = 'text-red-600 font-bold';
                         if (emp.cuadrilla === 'Fijo Noche' && (b.hrsExt !== 42)) hrClassExt = 'text-red-600 font-bold';
-                        else if (emp.cuadrilla === 'Oficina' && (b.hrsExt !== 0)) hrClassExt = 'text-red-600 font-bold';
-                        else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina' && b.hrsExt !== 28) hrClassExt = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla === 'Oficina (L-V)' && (b.hrsExt !== 0)) hrClassExt = 'text-red-600 font-bold';
+                        else if (emp.cuadrilla !== 'Fijo Noche' && emp.cuadrilla !== 'Oficina (L-V)' && b.hrsExt !== 28) hrClassExt = 'text-red-600 font-bold';
 
                         const reportesCnt = (emp.reportesActuales || []).length;
                         const reporteBadge = reportesCnt > 0 ? `<span class="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-1 rounded-full">${reportesCnt} Reportes</span>` : `<span class="text-slate-300 text-[10px]">-</span>`;
@@ -1222,7 +1246,7 @@
                 
                 let defaultOrd = 56; let defaultExt = 28;
                 if (emp.cuadrilla === 'Fijo Noche') { defaultOrd = 42; defaultExt = 42; }
-                else if (emp.cuadrilla === 'Oficina') { defaultOrd = 88; defaultExt = 0; }
+                else if (emp.cuadrilla === 'Oficina (L-V)') { defaultOrd = 88; defaultExt = 0; }
 
                 const currentOrd = emp.hrsOrd !== undefined ? emp.hrsOrd : defaultOrd;
                 const currentExt = emp.hrsExt !== undefined ? emp.hrsExt : defaultExt;
